@@ -27,11 +27,11 @@ This document tracks the tasks required to build an automated, agentic workflow 
   - Readme and issues context
 - [ ] Add configuration variables in `backend/.env` for the GitHub MCP URL and SQLite database path.
 
-## Phase 2: Intelligence (Suggestion Agent - Python)
-- [ ] Create Suggestion Agent in Python (`backend/agents/suggestion_agent.py`) using the AI model runtime.
+## Phase 2: Intelligence (Universal Agent Runtime - Python)
+- [ ] Create a universal Agent Runtime Engine (`backend/core/agent_runtime.py`) that queries the SQLite database for agent configurations (prompts, tools, LLMs) rather than using hardcoded agent files.
 - [ ] Define input/output interfaces for recommendations (structured JSON containing project, title, impact, description, files affected).
 - [ ] Write the tool codes which will connect with the database to provide appropriate answers and capabilities to the agents.
-- [ ] Hook up suggestion runner to evaluate the workspace context parsed from GitHub MCP.
+- [ ] Hook up the runtime to evaluate the workspace context parsed from GitHub MCP.
 
 ## Phase 3: Notifications & Approval Interface (Slack - Python)
 - [ ] Create Slack Connector (`backend/connectors/slack.py`) to send formatted messages.
@@ -76,12 +76,13 @@ This phase outlines the complete, from-scratch rewrite of the entire existing No
 - [ ] Migrate `src/lib/audit.ts` and `roi.ts` for tracking metrics and system audits.
 - [ ] Migrate `src/lib/rbac.ts` for role-based access control to tools and agents.
 
-### 6.2 Agent Implementations (`src/lib/agents/*`)
-- [ ] Port all agent definitions to `backend/agents/`:
-  - `developer.py`, `codeReviewer.py`, `complianceAgent.py`, `debtScanner.py`, `deploymentAgent.py`, `productManager.py`, `requirementsAnalyst.py`, `routerAgent.py`, `securityReviewer.py`, `taskPlanner.py`, `testingAgent.py`, `uxDesigner.py`.
-- [ ] Migrate system prompts from `src/lib/prompts/` to the new `agents` SQLite table or Python modules.
+### 6.2 Database-Driven Agent Execution
+- [ ] Migrate all existing hardcoded agents (`developer`, `codeReviewer`, `complianceAgent`, etc.) into data records within the `agents` SQLite table.
+- [ ] Migrate all system prompts from `src/lib/prompts/` to the `system_prompt` column in the database.
+- [ ] Remove the need for individual agent files entirely. The universal `agent_runtime.py` will handle all agent executions dynamically based on their database configurations.
 
-### 6.3 Tools & Skills (`src/lib/tools/*`, `src/lib/skills/*`)
+### 6.3 Tools Runtime Engine & Skills (`src/lib/tools/*`, `src/lib/skills/*`)
+- [ ] Create a universal **Tools Runtime Engine** (`backend/core/tools_runtime.py`) to securely load, validate, and execute tools dynamically based on database configurations.
 - [ ] Port all tool executions (sandbox codeRunner, file system ops, git ops) to `backend/tools/`.
 - [ ] Register tools in the new `tools` SQLite table and map them to agents in `agent_tools`.
 - [ ] Migrate specific language skills and coding rules from `src/lib/skills/` to `backend/skills/`.
