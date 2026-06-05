@@ -47,13 +47,24 @@ This document tracks the tasks required to build an automated, agentic workflow 
 - [ ] Programmatically invoke the multi-agent orchestrator to implement the approved feature task.
 - [ ] Update the original Slack message block in-place with execution progress (e.g., "🔄 Implementing...", "✅ Completed!").
 
-## Phase 5: Dashboard & UI Control (Frontend)
+## Phase 5: Dashboard, UI Control & Administration (Frontend)
 - [ ] Add the frontend feature to the existing codebase (e.g., `src/app/page.tsx`).
 - [ ] Create UI Suggestion panel displaying:
   - Scanned projects
   - Suggestion cards
   - "Send to Slack" trigger (making an API call to the new Python backend)
   - Manual local approval trigger button (making an API call to the new Python backend)
+- [ ] **Tool Management Panel**:
+  - Create UI and backend APIs for adding, editing, and deleting Tools.
+- [ ] **Agent Management Panel**:
+  - Create UI and backend APIs for adding, editing, and deleting Agents.
+  - The agent configuration form must capture:
+    - Basic details: Name, Type, and Description.
+    - The System Prompt.
+    - The specific Tools the agent has access to.
+    - The LLM configurations assigned to the agent.
+    - New entries for the `agent_tasks_registry` (to advertise the agent's capabilities).
+    - (Optional) Mandatory `workflow_triggers` to execute once this agent completes a specific task.
 
 ## Phase 6: Complete Node.js to Python Migration
 This phase outlines the complete, from-scratch rewrite of the entire existing Node.js backend (`src/lib` and `src/app/api`) into the new Python `backend/` folder. This ensures the full application retains all existing functionality alongside the new agentic Slack workflow.
@@ -216,5 +227,26 @@ CREATE TABLE service_integrations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     service_name TEXT NOT NULL UNIQUE, -- e.g., 'github_mcp', 'slack', 'twitter'
     metadata TEXT -- JSON string containing all important config like base_url, api_keys, etc.
+);
+
+-- 9. Registry of specific tasks each agent is responsible for (allowing agents to discover others' capabilities)
+CREATE TABLE agent_tasks_registry (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id INTEGER NOT NULL,
+    task_name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    FOREIGN KEY(agent_id) REFERENCES agents(id)
+);
+
+-- 10. Mandatory workflow triggers (instructs the system to call a specific agent after a step is completed)
+CREATE TABLE workflow_triggers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_agent_id INTEGER NOT NULL,
+    completed_step_name TEXT NOT NULL,
+    target_agent_id INTEGER NOT NULL,
+    action_to_trigger TEXT NOT NULL,
+    is_mandatory BOOLEAN DEFAULT 1,
+    FOREIGN KEY(source_agent_id) REFERENCES agents(id),
+    FOREIGN KEY(target_agent_id) REFERENCES agents(id)
 );
 ```
