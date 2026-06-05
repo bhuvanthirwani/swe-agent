@@ -55,12 +55,46 @@ This document tracks the tasks required to build an automated, agentic workflow 
   - "Send to Slack" trigger (making an API call to the new Python backend)
   - Manual local approval trigger button (making an API call to the new Python backend)
 
-## Phase 6: Node.js to Python Migration
-- [ ] Audit existing Node.js API routes and backend features.
-- [ ] Incrementally migrate existing Node.js features to the Python `backend` directory.
-- [ ] Update frontend requests to point to the new Python endpoints.
-- [ ] Deprecate and remove old Node.js backend code once migration is fully completed and verified.
+## Phase 6: Complete Node.js to Python Migration
+This phase outlines the complete, from-scratch rewrite of the entire existing Node.js backend (`src/lib` and `src/app/api`) into the new Python `backend/` folder. This ensures the full application retains all existing functionality alongside the new agentic Slack workflow.
 
+### 6.1 Core Orchestration & State Management
+- [ ] Migrate `src/lib/orchestrator.ts` to `backend/core/orchestrator.py` (Main DAG/workflow runner).
+- [ ] Migrate `src/lib/memory.ts`, `history.ts`, and `sessions.ts` to `backend/core/state_management.py`.
+- [ ] Migrate `src/lib/hitl.ts` (Human-in-the-Loop) to integrate with the new SQLite schema and Slack approvals.
+- [ ] Migrate `src/lib/audit.ts` and `roi.ts` for tracking metrics and system audits.
+- [ ] Migrate `src/lib/rbac.ts` for role-based access control to tools and agents.
+
+### 6.2 Agent Implementations (`src/lib/agents/*`)
+- [ ] Port all agent definitions to `backend/agents/`:
+  - `developer.py`, `codeReviewer.py`, `complianceAgent.py`, `debtScanner.py`, `deploymentAgent.py`, `productManager.py`, `requirementsAnalyst.py`, `routerAgent.py`, `securityReviewer.py`, `taskPlanner.py`, `testingAgent.py`, `uxDesigner.py`.
+- [ ] Migrate system prompts from `src/lib/prompts/` to the new `agents` SQLite table or Python modules.
+
+### 6.3 Tools & Skills (`src/lib/tools/*`, `src/lib/skills/*`)
+- [ ] Port all tool executions (sandbox codeRunner, file system ops, git ops) to `backend/tools/`.
+- [ ] Register tools in the new `tools` SQLite table and map them to agents in `agent_tools`.
+- [ ] Migrate specific language skills and coding rules from `src/lib/skills/` to `backend/skills/`.
+
+### 6.4 RAG, Context & Validation (`src/lib/rag/*`, `src/lib/validation/*`)
+- [ ] Migrate `src/lib/validation/` (Zod schemas) to Pydantic models in `backend/models/`.
+- [ ] Port `src/lib/rag/knowledgeBase.ts` (In-memory cosine search) to Python using numpy or a lightweight vector store.
+- [ ] Migrate `src/lib/context.ts` and `src/lib/workspace/` (AST parsing, workspace handling) to Python equivalents.
+
+### 6.5 API Endpoints (`src/app/api/*`)
+Rebuild all Next.js API routes as FastAPI/Flask endpoints under `backend/api/routers/`:
+- [ ] `/api/agent` -> `POST /api/agents/run`
+- [ ] `/api/analyze` -> `POST /api/analyze/workspace`
+- [ ] `/api/deliver` -> `POST /api/deliver/artifacts`
+- [ ] `/api/execute` -> `POST /api/execute/workflow`
+- [ ] `/api/hitl` -> `POST /api/hitl/respond`
+- [ ] `/api/orchestrate` -> `POST /api/orchestrate/start`
+- [ ] `/api/sessions` -> CRUD endpoints for sessions
+- [ ] `/api/vision` -> `POST /api/vision/process`
+- [ ] `/api/workspace` -> Endpoints for file parsing and management
+
+### 6.6 Frontend Integration
+- [ ] Update all API calls in `src/components/` and `src/app/page.tsx` to point to the new Python API base URL.
+- [ ] Deprecate and remove the old `src/app/api` and `src/lib` backend code once the Python migration is fully completed and verified.
 ## Phase 7: Containerization (Docker)
 - [ ] Create a `Dockerfile` for the Next.js frontend.
 - [ ] Create a `Dockerfile` for the Python backend.
@@ -157,5 +191,30 @@ CREATE TABLE artifacts (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(task_id) REFERENCES tasks(id),
     FOREIGN KEY(agent_run_id) REFERENCES agent_runs(id)
+);
+-- 7. Configuration for LLM providers (Deterministic workflows)
+CREATE TABLE llm_configs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider TEXT NOT NULL, -- e.g., 'openai', 'anthropic', 'groq'
+    model_name TEXT NOT NULL,
+    api_key TEXT,
+    base_url TEXT
+);
+
+-- Mapping agents to their designated LLMs
+CREATE TABLE agent_llms (
+    agent_id INTEGER,
+    llm_id INTEGER,
+    is_primary BOOLEAN DEFAULT 1,
+    PRIMARY KEY (agent_id, llm_id),
+    FOREIGN KEY(agent_id) REFERENCES agents(id),
+    FOREIGN KEY(llm_id) REFERENCES llm_configs(id)
+);
+
+-- 8. Configuration for external service integrations (GitHub MCP, Social Media, Slack, etc.)
+CREATE TABLE service_integrations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    service_name TEXT NOT NULL UNIQUE, -- e.g., 'github_mcp', 'slack', 'twitter'
+    metadata TEXT -- JSON string containing all important config like base_url, api_keys, etc.
 );
 ```
