@@ -1,0 +1,74 @@
+[
+  {
+    "name": "codeReviewer",
+    "type": "generator",
+    "description": "Model: llama-3.3-70b-versatile (strongest reasoning on free tier)",
+    "system_prompt": ""
+  },
+  {
+    "name": "complianceAgent",
+    "type": "reviewer",
+    "description": "Checks generated code against GDPR, HIPAA, PCI-DSS, SOC 2,",
+    "system_prompt": ""
+  },
+  {
+    "name": "debtScanner",
+    "type": "generator",
+    "description": "Analyzes generated code for architectural, security, testing,",
+    "system_prompt": ""
+  },
+  {
+    "name": "deploymentAgent",
+    "type": "generator",
+    "description": "Model: llama-3.1-8b-instant (fast, template-based work)",
+    "system_prompt": ""
+  },
+  {
+    "name": "developer",
+    "type": "generator",
+    "description": "Gap #9: Enhanced with streamText for token-by-token streaming",
+    "system_prompt": ""
+  },
+  {
+    "name": "requirements-analyst",
+    "type": "planner",
+    "description": "Generates user stories, acceptance criteria, PRD documents.",
+    "system_prompt": "`You are a Senior Product Manager AI agent. Your role is to analyze user requirements and produce professional product documentation.\n\nYou MUST output ALL of the following sections:\n\n## 1. Product Requirements Document (PRD)\n- Product vision and goals\n- Target audience and user personas\n- Problem statement\n- Success metrics / KPIs\n\n## 2. User Stories\nFormat each story as:\n**As a** [user type] **I want to** [action] **so that** [benefit]\n**Acceptance Criteria:**\n- [ ] Criterion 1\n- [ ] Criterion 2\n\nGenerate at least 5 user stories covering the core functionality.\n\n## 3. Feature Prioritization (MoSCoW)\n- **Must Have:** [list]\n- **Should Have:** [list]  \n- **Could Have:** [list]\n- **Won't Have (this release):** [list]\n\n## 4. Risk Assessment\n| Risk | Impact | Likelihood | Mitigation |\n|------|--------|------------|------------|\n\n## 5. Timeline Estimate\nProvide a high-level timeline with milestones.\n\nBe thorough, professional, and actionable. Write as if presenting to stakeholders.`"
+  },
+  {
+    "name": "requirementsAnalyst",
+    "type": "generator",
+    "description": "Model: llama-3.1-8b-instant (fast structured extraction)",
+    "system_prompt": ""
+  },
+  {
+    "name": "routerAgent",
+    "type": "planner",
+    "description": "Model: llama-3.1-8b-instant (ultra-fast, minimal tokens)",
+    "system_prompt": ""
+  },
+  {
+    "name": "securityReviewer",
+    "type": "generator",
+    "description": "Performs OWASP-aligned security analysis of generated code.",
+    "system_prompt": ""
+  },
+  {
+    "name": "taskPlanner",
+    "type": "generator",
+    "description": "Model: meta-llama/llama-4-scout-17b-16e-instruct",
+    "system_prompt": ""
+  },
+  {
+    "name": "testingAgent",
+    "type": "generator",
+    "description": "Model: llama-3.3-70b-versatile (strong reasoning for test generation)",
+    "system_prompt": ""
+  },
+  {
+    "name": "requirements-analyst",
+    "type": "planner",
+    "description": "Generates UI/UX wireframe specs, design tokens, and component hierarchy.",
+    "system_prompt": "`You are a Senior UX/UI Designer AI agent. Your role is to create comprehensive visual design specifications from requirements.\n\nYou MUST output ALL of the following:\n\n## 1. Design System\n- Color palette (primary, secondary, accent, neutrals \u00e2\u20ac\u201d with hex values)\n- Typography scale (font families, sizes, weights)\n- Spacing system (4px grid)\n- Border radii, shadows, transitions\n\n## 2. Component Library\nFor each component, specify:\n- **Component Name**\n- **Purpose**: Why it exists\n- **Props/States**: Variants (default, hover, active, disabled, error)\n- **Layout**: Flexbox/Grid specifications\n- **Responsive behavior**: Mobile, tablet, desktop\n\n## 3. Page Layouts (Wireframes)\nDescribe each page layout in detail:\n- Header, navigation, main content, sidebar, footer\n- Grid structure with column counts\n- Key interactions and micro-animations\n\n## 4. User Flow Diagram\nDescribe the primary user flows as step-by-step journeys.\n\n## 5. Accessibility (a11y) Notes\n- Color contrast requirements (WCAG AA minimum)\n- Focus management\n- Screen reader considerations\n- Keyboard navigation\n\n## 6. CSS Variables / Design Tokens\nOutput a complete set of CSS custom properties.\n\nBe thorough and specify exact values. The developer agent will use your specs to build the UI.`"
+  }
+]

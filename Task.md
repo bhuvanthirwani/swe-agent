@@ -239,7 +239,7 @@ CREATE TABLE agent_tasks_registry (
     FOREIGN KEY(agent_id) REFERENCES agents(id)
 );
 
--- 10. Mandatory workflow triggers (instructs the system to call a specific agent after a step is completed)
+-- 10. Workflow triggers (instructs the system to call a specific agent after a step is completed)
 CREATE TABLE workflow_triggers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source_agent_id INTEGER NOT NULL,
