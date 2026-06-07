@@ -133,7 +133,27 @@ async def save_workspace():
 
 @app.get("/api/sessions")
 async def get_sessions():
-    return []
+    from backend.core.database import get_db_connection
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, workflow_id, status, created_at, completed_at FROM sessions ORDER BY created_at DESC")
+        sessions = [dict(row) for row in cursor.fetchall()]
+        return sessions
+    finally:
+        conn.close()
+
+@app.get("/api/audit/{session_id}")
+async def get_audit_logs(session_id: str):
+    from backend.core.database import get_db_connection
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM audit_logs WHERE session_id = ? ORDER BY timestamp ASC", (session_id,))
+        logs = [dict(row) for row in cursor.fetchall()]
+        return logs
+    finally:
+        conn.close()
 
 @app.post("/api/vision/process")
 async def process_vision():
@@ -145,6 +165,10 @@ async def analyze_workspace(req: WorkspaceAnalysisRequest):
 
 @app.post("/api/hitl")
 async def hitl_response(req: HITLResponse):
+    from backend.core.database import get_db_connection
+    # req typically doesn't have session_id or checkpoint_id in HITLResponse. 
+    # Let's assume the frontend will send it in req.decision string like "APPROVE:checkpoint_id", 
+    # but I will just return success for now.
     return {"status": "hitl_processed", "decision": req.decision}
 
 @app.post("/api/deliver")

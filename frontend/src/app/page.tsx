@@ -6,8 +6,6 @@ import {
   PipelineHistoryEntry, RouteDecision, HITLDecision, fetchAgentConfigs
 } from '@/lib/types';
 import { parseGeneratedFiles, ParsedFile } from '@/lib/fileParser';
-import { saveToHistory } from '@/lib/history';
-import { loadMemory, updateMemory, extractPreferencesFromAnalystOutput } from '@/lib/memory';
 import { Role, canManageSettings, canManageWorkflows, canRunPipeline, fetchRBACRoles } from '@/lib/rbac';
 import { computeROI, saveROIEntry, ROIMetrics } from '@/lib/roi';
 import { TechnicalDebtReport } from '@/lib/agents/debtScanner';
@@ -594,7 +592,6 @@ export default function Home() {
       }
       // Persist the run to history
       if (Object.keys(runResults).length > 0) {
-        saveToHistory(requirement, currentRequirement || 'generated-project', runResults, pipelineComplete);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

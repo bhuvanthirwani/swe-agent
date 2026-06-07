@@ -32,8 +32,8 @@ def seed_database():
         cursor.execute("ALTER TABLE agents ADD COLUMN icon TEXT")
     if 'color' not in columns:
         cursor.execute("ALTER TABLE agents ADD COLUMN color TEXT")
-    if 'max_tokens' not in columns:
-        cursor.execute("ALTER TABLE agents ADD COLUMN max_tokens INTEGER")
+    
+        
         
     cursor.execute("PRAGMA table_info(workflows)")
     wf_columns = [col['name'] for col in cursor.fetchall()]
@@ -100,7 +100,7 @@ def seed_database():
         row = cursor.fetchone()
         if not row:
             cursor.execute(
-                "INSERT INTO llm_providers (name, description, base_url) VALUES (?, ?, ?)",
+                "INSERT INTO llm_providers (name, description, base_url) VALUES (?, ?)",
                 (provider["name"], provider["description"], provider["base_url"])
             )
             provider_id_map[provider["name"]] = cursor.lastrowid
@@ -129,7 +129,7 @@ def seed_database():
         row = cursor.fetchone()
         if not row:
             cursor.execute(
-                "INSERT INTO llm_configs (name, provider_id, model_name) VALUES (?, ?, ?)",
+                "INSERT INTO llm_configs (name, provider_id, model_name) VALUES (?, ?)",
                 (llm["name"], provider_id, llm["model_name"])
             )
             llm_id_map[llm["model_name"]] = cursor.lastrowid
@@ -151,8 +151,7 @@ def seed_database():
                 "output_schema": "{\"type\": \"object\", \"properties\": {\"decision\": {\"type\": \"string\", \"enum\": [\"APPROVED\", \"CHANGES_REQUESTED\"], \"description\": \"The final decision on the code\"}, \"score\": {\"type\": \"integer\", \"description\": \"The code quality score out of 10\"}, \"summary\": {\"type\": \"string\", \"description\": \"A brief summary of the review\"}, \"issues\": {\"type\": \"array\", \"description\": \"List of issues found\"}}, \"required\": [\"decision\", \"score\", \"summary\"]}",
                 "display_name": "Code Reviewer",
                 "icon": "🔎",
-                "color": "#f59e0b",
-                "max_tokens": 2048
+                "color": "#f59e0b"
         },
         {
                 "name": "compliance-agent",
@@ -164,8 +163,7 @@ def seed_database():
                 "output_schema": "{\"type\": \"object\", \"properties\": {\"overallScore\": {\"type\": \"integer\", \"description\": \"The overall compliance score\"}, \"overallStatus\": {\"type\": \"string\", \"description\": \"The overall compliance status (PASS/FAIL/WARNING)\"}, \"summary\": {\"type\": \"string\", \"description\": \"A brief summary of compliance findings\"}}, \"required\": [\"overallScore\", \"overallStatus\", \"summary\"]}",
                 "display_name": "Compliance Agent",
                 "icon": "⚖️",
-                "color": "#8b5cf6",
-                "max_tokens": 2048
+                "color": "#8b5cf6"
         },
         {
                 "name": "debt-scanner",
@@ -177,8 +175,7 @@ def seed_database():
                 "output_schema": "{\"type\": \"object\", \"properties\": {\"debtScore\": {\"type\": \"integer\", \"description\": \"The technical debt score\"}, \"grade\": {\"type\": \"string\", \"description\": \"The technical debt grade (A-F)\"}, \"summary\": {\"type\": \"string\", \"description\": \"Summary of technical debt\"}}, \"required\": [\"debtScore\", \"grade\", \"summary\"]}",
                 "display_name": "Debt Scanner",
                 "icon": "💳",
-                "color": "#ef4444",
-                "max_tokens": 2048
+                "color": "#ef4444"
         },
         {
                 "name": "deployment-agent",
@@ -190,8 +187,7 @@ def seed_database():
                 "output_schema": "{\"type\": \"object\", \"properties\": {\"dockerfile\": {\"type\": \"string\", \"description\": \"The generated Dockerfile content\"}, \"docker_compose\": {\"type\": \"string\", \"description\": \"The generated docker-compose.yml content\"}, \"deployment_guide\": {\"type\": \"string\", \"description\": \"A guide on how to deploy the application\"}}, \"required\": [\"dockerfile\"]}",
                 "display_name": "Deployment Agent",
                 "icon": "🚀",
-                "color": "#10b981",
-                "max_tokens": 2048
+                "color": "#10b981"
         },
         {
                 "name": "developer",
@@ -203,8 +199,7 @@ def seed_database():
                 "output_schema": "{\"type\": \"object\", \"properties\": {\"code_files\": {\"type\": \"array\", \"items\": {\"type\": \"object\"}, \"description\": \"The array of generated code files\"}, \"summary\": {\"type\": \"string\", \"description\": \"Summary of the development work\"}}, \"required\": [\"code_files\"]}",
                 "display_name": "Developer Agent",
                 "icon": "💻",
-                "color": "#06b6d4",
-                "max_tokens": 4096
+                "color": "#06b6d4"
         },
         {
                 "name": "product-manager",
@@ -216,8 +211,7 @@ def seed_database():
                 "output_schema": "{\"type\": \"object\", \"properties\": {\"prd\": {\"type\": \"string\", \"description\": \"The generated Product Requirements Document\"}, \"user_stories\": {\"type\": \"array\", \"description\": \"List of generated user stories\"}, \"timeline\": {\"type\": \"string\", \"description\": \"The estimated timeline\"}}, \"required\": [\"prd\", \"user_stories\"]}",
                 "display_name": "Product Manager",
                 "icon": "📊",
-                "color": "#f59e0b",
-                "max_tokens": 2048
+                "color": "#f59e0b"
         },
         {
                 "name": "requirements-analyst",
@@ -229,8 +223,7 @@ def seed_database():
                 "output_schema": "{\"type\": \"object\", \"properties\": {\"title\": {\"type\": \"string\", \"description\": \"The project title\"}, \"description\": {\"type\": \"string\", \"description\": \"The project description\"}, \"functional_requirements\": {\"type\": \"array\", \"description\": \"List of functional requirements\"}, \"acceptance_criteria\": {\"type\": \"array\", \"description\": \"List of acceptance criteria\"}}, \"required\": [\"title\", \"functional_requirements\"]}",
                 "display_name": "Requirements Analyst",
                 "icon": "🔍",
-                "color": "#6366f1",
-                "max_tokens": 2048
+                "color": "#6366f1"
         },
         {
                 "name": "routerAgent",
@@ -251,8 +244,7 @@ def seed_database():
                 "output_schema": "{\"type\": \"object\", \"properties\": {\"passed\": {\"type\": \"boolean\", \"description\": \"Whether the code passed the security review\"}, \"severity\": {\"type\": \"string\", \"description\": \"The severity level of the worst vulnerability found\"}, \"vulnerabilities\": {\"type\": \"array\", \"description\": \"List of vulnerabilities found\"}, \"summary\": {\"type\": \"string\", \"description\": \"A summary of the security review\"}}, \"required\": [\"passed\", \"severity\", \"vulnerabilities\"]}",
                 "display_name": "Security Reviewer",
                 "icon": "🛡️",
-                "color": "#ef4444",
-                "max_tokens": 3072
+                "color": "#ef4444"
         },
         {
                 "name": "task-planner",
@@ -264,8 +256,7 @@ def seed_database():
                 "output_schema": "{\"type\": \"object\", \"properties\": {\"tasks\": {\"type\": \"array\", \"description\": \"The array of development tasks\"}, \"parallel_groups\": {\"type\": \"array\", \"description\": \"Tasks grouped for parallel execution\"}, \"total_complexity\": {\"type\": \"string\", \"description\": \"The total estimated complexity\"}}, \"required\": [\"tasks\"]}",
                 "display_name": "Task Planner",
                 "icon": "📋",
-                "color": "#8b5cf6",
-                "max_tokens": 2048
+                "color": "#8b5cf6"
         },
         {
                 "name": "testing-agent",
@@ -277,8 +268,7 @@ def seed_database():
                 "output_schema": "{\"type\": \"object\", \"properties\": {\"test_files\": {\"type\": \"array\", \"description\": \"The generated test files\"}, \"summary\": {\"type\": \"string\", \"description\": \"Summary of the generated tests\"}}, \"required\": [\"test_files\"]}",
                 "display_name": "Testing Agent",
                 "icon": "🧪",
-                "color": "#ec4899",
-                "max_tokens": 3072
+                "color": "#ec4899"
         },
         {
                 "name": "ux-designer",
@@ -290,8 +280,7 @@ def seed_database():
                 "output_schema": "{\"type\": \"object\", \"properties\": {\"design_system\": {\"type\": \"object\", \"description\": \"The comprehensive design system specifications\"}, \"component_library\": {\"type\": \"array\", \"description\": \"List of components with specs\"}, \"wireframes\": {\"type\": \"array\", \"description\": \"Page layout descriptions\"}}, \"required\": [\"design_system\"]}",
                 "display_name": "UX/UI Designer",
                 "icon": "🎨",
-                "color": "#ec4899",
-                "max_tokens": 2048
+                "color": "#ec4899"
         },
         {
                 "name": "github-suggestion-agent",
@@ -303,8 +292,7 @@ def seed_database():
                 "output_schema": "{\"type\": \"object\", \"properties\": {\"feature_additions\": {\"type\": \"array\", \"description\": \"Suggested new features\"}, \"feature_modifications\": {\"type\": \"array\", \"description\": \"Suggested improvements to existing features\"}, \"security_concerns\": {\"type\": \"array\", \"description\": \"Identified security vulnerabilities or bad practices\"}}, \"required\": [\"feature_additions\"]}",
                 "display_name": "GitHub Suggestion Agent",
                 "icon": "🐙",
-                "color": "#3b82f6",
-                "max_tokens": 3072
+                "color": "#3b82f6"
         }
 ]
 
@@ -319,16 +307,16 @@ def seed_database():
         
         if not row:
             cursor.execute(
-                "INSERT INTO agents (name, type, description, system_prompt, input_schema, output_schema, display_name, icon, color, max_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (agent["name"], agent["type"], agent["description"], agent["system_prompt"], agent.get("input_schema"), agent.get("output_schema"), agent.get("display_name"), agent.get("icon"), agent.get("color"), agent.get("max_tokens"))
+                "INSERT INTO agents (name, type, description, system_prompt, input_schema, output_schema, display_name, icon, color) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (agent["name"], agent["type"], agent["description"], agent["system_prompt"], agent.get("input_schema"), agent.get("output_schema"), agent.get("display_name"), agent.get("icon"), agent.get("color"), )
             )
             agent_id = cursor.lastrowid
             print(f"Created Agent: {agent['name']}")
         else:
             agent_id = row["id"]
             cursor.execute(
-                "UPDATE agents SET type = ?, description = ?, system_prompt = ?, input_schema = ?, output_schema = ?, display_name = ?, icon = ?, color = ?, max_tokens = ? WHERE id = ?",
-                (agent["type"], agent["description"], agent["system_prompt"], agent.get("input_schema"), agent.get("output_schema"), agent.get("display_name"), agent.get("icon"), agent.get("color"), agent.get("max_tokens"), agent_id)
+                "UPDATE agents SET type = ?, description = ?, system_prompt = ?, input_schema = ?, output_schema = ?, display_name = ?, icon = ?, color = ? = ? WHERE id = ?",
+                (agent["type"], agent["description"], agent["system_prompt"], agent.get("input_schema"), agent.get("output_schema"), agent.get("display_name"), agent.get("icon"), agent.get("color"), agent_id)
             )
             print(f"Updated Agent: {agent['name']}")
 
@@ -358,7 +346,7 @@ def seed_database():
         row = cursor.fetchone()
         if not row:
             cursor.execute(
-                "INSERT INTO tools (name, description, code_reference) VALUES (?, ?, ?)",
+                "INSERT INTO tools (name, description, code_reference) VALUES (?, ?)",
                 (tool["name"], tool["description"], tool["code_reference"])
             )
             print(f"Created Tool: {tool['name']}")
@@ -416,6 +404,7 @@ def seed_database():
         if agent_name in agent_tools_map:
             for tool_name in agent_tools_map[agent_name]:
                 if tool_name in db_tools:
+                    # Assign tools
                     cursor.execute("INSERT INTO agent_tools (agent_id, tool_id) VALUES (?, ?)", (agent_id, db_tools[tool_name]))
 
     conn.commit()
@@ -508,7 +497,7 @@ def seed_database():
         row = cursor.fetchone()
         if not row:
             cursor.execute(
-                "INSERT INTO workflows (id, name, description, version, entry_node_id, nodes_json, edges_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO workflows (id, name, description, version, entry_node_id, nodes_json, edges_json) VALUES (?, ?, ?, ?, ?, ?)",
                 (wf["id"], wf["name"], wf["description"], wf["version"], wf["entry_node_id"], wf["nodes_json"], wf["edges_json"])
             )
             print(f"Created Workflow: {wf['name']}")
@@ -531,7 +520,7 @@ def seed_database():
     for conn_data in connectors:
         cursor.execute("SELECT id FROM connectors WHERE id = ?", (conn_data["id"],))
         if not cursor.fetchone():
-            cursor.execute("INSERT INTO connectors (id, type, name, description, icon, enabled, config) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            cursor.execute("INSERT INTO connectors (id, type, name, description, icon, enabled, config) VALUES (?, ?, ?, ?, ?, ?)",
                            (conn_data["id"], conn_data["type"], conn_data["name"], conn_data["description"], conn_data["icon"], conn_data["enabled"], conn_data["config"]))
         else:
             cursor.execute("UPDATE connectors SET type=?, name=?, description=?, icon=? WHERE id=?", 
@@ -562,7 +551,7 @@ def seed_database():
     for skill in language_skills:
         cursor.execute("SELECT id FROM language_skills WHERE id = ?", (skill["id"],))
         if not cursor.fetchone():
-            cursor.execute("INSERT INTO language_skills (id, name, file_extensions, run_command, lint_command, test_command) VALUES (?, ?, ?, ?, ?, ?)",
+            cursor.execute("INSERT INTO language_skills (id, name, file_extensions, run_command, lint_command, test_command) VALUES (?, ?, ?, ?, ?)",
                            (skill["id"], skill["name"], skill["file_extensions"], skill["run_command"], skill["lint_command"], skill["test_command"]))
 
     # 8. Seed RAG Knowledge Base
@@ -574,7 +563,7 @@ def seed_database():
     for kb in kb_chunks:
         cursor.execute("SELECT id FROM knowledge_base WHERE id = ?", (kb["id"],))
         if not cursor.fetchone():
-            cursor.execute("INSERT INTO knowledge_base (id, title, content, category, tags) VALUES (?, ?, ?, ?, ?)",
+            cursor.execute("INSERT INTO knowledge_base (id, title, content, category, tags) VALUES (?, ?, ?, ?)",
                            (kb["id"], kb["title"], kb["content"], kb["category"], kb["tags"]))
 
     conn.commit()

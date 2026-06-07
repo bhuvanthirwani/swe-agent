@@ -1,11 +1,10 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { PipelineHistoryEntry } from '@/lib/types';
-import { loadHistory, removeFromHistory, clearHistory } from '@/lib/history';
 
 interface HistoryPanelProps {
-    onRestore: (entry: PipelineHistoryEntry) => void;
+    onRestore: (entry: any) => void;
 }
 
 function timeAgo(timestamp: string): string {
@@ -20,22 +19,29 @@ function timeAgo(timestamp: string): string {
 
 export default function HistoryPanel({ onRestore }: HistoryPanelProps) {
     const [isOpen, setIsOpen] = useState(false);
-    const [entries, setEntries] = useState<PipelineHistoryEntry[]>([]);
+    const [entries, setEntries] = useState<any[]>([]);
     const [confirmClear, setConfirmClear] = useState(false);
 
-    const handleOpen = () => {
-        setEntries(loadHistory());
+    const handleOpen = async () => {
         setIsOpen(true);
+        try {
+            const res = await fetch('/api/sessions');
+            if (res.ok) {
+                const data = await res.json();
+                setEntries(data);
+            }
+        } catch (e) {
+            console.error('Failed to load history', e);
+        }
     };
 
     const handleRemove = (id: string) => {
-        removeFromHistory(id);
+        // Mock remove for now
         setEntries(prev => prev.filter(e => e.id !== id));
     };
 
     const handleClear = () => {
         if (confirmClear) {
-            clearHistory();
             setEntries([]);
             setConfirmClear(false);
         } else {
@@ -164,7 +170,6 @@ export default function HistoryPanel({ onRestore }: HistoryPanelProps) {
                         }}>
                             <span style={{ fontSize: '36px', opacity: 0.3 }}>🕐</span>
                             <p style={{ fontSize: '13px' }}>No past runs yet.</p>
-                            <p style={{ fontSize: '12px' }}>Run a pipeline and it will appear here.</p>
                         </div>
                     ) : (
                         entries.map(entry => (
@@ -180,44 +185,17 @@ export default function HistoryPanel({ onRestore }: HistoryPanelProps) {
                                 {/* Status + time */}
                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                        <span style={{ fontSize: '12px' }}>{entry.success ? '✅' : '❌'}</span>
+                                        <span style={{ fontSize: '12px' }}>{entry.status === 'complete' ? '✅' : '⏳'}</span>
                                         <span style={{
                                             fontSize: '11px',
                                             fontFamily: 'var(--font-mono)',
                                             color: 'var(--text-muted)',
-                                        }}>{timeAgo(entry.timestamp)}</span>
+                                        }}>{entry.created_at ? timeAgo(entry.created_at) : 'recently'}</span>
                                     </div>
                                     <div style={{ display: 'flex', gap: '4px', alignItems: 'center', fontSize: '11px', color: 'var(--text-muted)' }}>
-                                        <span>{entry.totalTokens.toLocaleString()} tok</span>
-                                        <button
-                                            onClick={() => handleRemove(entry.id)}
-                                            style={{
-                                                padding: '2px 6px',
-                                                background: 'transparent',
-                                                border: 'none',
-                                                color: 'var(--text-muted)',
-                                                cursor: 'pointer',
-                                                fontSize: '12px',
-                                                opacity: 0.5,
-                                            }}
-                                            title="Remove this entry"
-                                        >✕</button>
+                                        <span>Workflow: {entry.workflow_id}</span>
                                     </div>
                                 </div>
-
-                                {/* Requirement preview */}
-                                <p style={{
-                                    fontSize: '12px',
-                                    color: 'var(--text-secondary)',
-                                    marginBottom: '8px',
-                                    display: '-webkit-box',
-                                    WebkitLineClamp: 2,
-                                    WebkitBoxOrient: 'vertical',
-                                    overflow: 'hidden',
-                                    lineHeight: 1.5,
-                                }}>
-                                    {entry.requirement}
-                                </p>
 
                                 <button
                                     onClick={() => { onRestore(entry); setIsOpen(false); }}
@@ -233,7 +211,7 @@ export default function HistoryPanel({ onRestore }: HistoryPanelProps) {
                                         width: '100%',
                                     }}
                                 >
-                                    📂 Restore this run
+                                    📂 Load Session
                                 </button>
                             </div>
                         ))

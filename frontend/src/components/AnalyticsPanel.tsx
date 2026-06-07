@@ -5,7 +5,37 @@
 
 import React from 'react';
 import { AgentResult, AgentName, AGENT_CONFIGS, PipelineAnalytics } from '@/lib/types';
-import { computeAnalytics } from '@/lib/history';
+
+function computeAnalytics(agentResults: Record<string, AgentResult>): PipelineAnalytics {
+    let totalTokens = 0;
+    let totalLatencyMs = 0;
+    let estimatedCostUsd = 0;
+    const agentBreakdown = [];
+
+    for (const [agentName, result] of Object.entries(agentResults)) {
+        if (!result) continue;
+        const tokens = (result.output || "").length * 0.25; 
+        const latencyMs = result.latencyMs || 100;
+        totalTokens += tokens;
+        totalLatencyMs += latencyMs;
+        estimatedCostUsd += (tokens / 1000000) * 0.15;
+        
+        agentBreakdown.push({
+            agentName,
+            tokens,
+            latencyMs,
+            costUsd: (tokens / 1000000) * 0.15
+        });
+    }
+
+    return {
+        totalTokens,
+        totalLatencyMs,
+        estimatedCostUsd,
+        agentBreakdown
+    };
+}
+
 
 interface AnalyticsPanelProps {
     agentResults: Record<string, AgentResult | null>;

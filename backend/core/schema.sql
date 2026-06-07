@@ -40,7 +40,6 @@ CREATE TABLE IF NOT EXISTS agents (
     display_name TEXT,
     icon TEXT,
     color TEXT,
-    max_tokens INTEGER,
     type TEXT NOT NULL, -- e.g., 'generator', 'reviewer', 'planner'
     description TEXT,
     system_prompt TEXT, -- System prompt providing exact instructions for the agent
@@ -68,7 +67,8 @@ CREATE TABLE IF NOT EXISTS agent_tools (
 -- 5. Tracking individual agent steps and their specific progress
 CREATE TABLE IF NOT EXISTS agent_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id INTEGER NOT NULL,
+    task_id INTEGER,
+    session_id TEXT,
     agent_id INTEGER NOT NULL,
     step_order INTEGER NOT NULL, -- The sequence in the pipeline
     status TEXT DEFAULT 'pending', -- 'pending', 'running', 'success', 'failed'
@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     started_at TIMESTAMP,
     completed_at TIMESTAMP,
     FOREIGN KEY(task_id) REFERENCES tasks(id),
+    FOREIGN KEY(session_id) REFERENCES sessions(id),
     FOREIGN KEY(agent_id) REFERENCES agents(id)
 );
 
@@ -206,3 +207,70 @@ CREATE TABLE IF NOT EXISTS knowledge_base (
     tags TEXT -- JSON array
 );
 
+-- 16. Sessions
+CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    workflow_id TEXT,
+    status TEXT DEFAULT 'running',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP
+);
+
+-- 17. Connector Executions
+CREATE TABLE IF NOT EXISTS connector_executions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    agent_run_id INTEGER,
+    connector_name TEXT,
+    payload TEXT,
+    output TEXT,
+    executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(session_id) REFERENCES sessions(id),
+    FOREIGN KEY(agent_run_id) REFERENCES agent_runs(id)
+);
+
+-- 18. Audit Logs
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    event_type TEXT,
+    agent_name TEXT,
+    input TEXT,
+    output TEXT,
+    tokens INTEGER,
+    latency INTEGER,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(session_id) REFERENCES sessions(id)
+);
+
+-- 19. Checkpoints
+CREATE TABLE IF NOT EXISTS checkpoints (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    state_json TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(session_id) REFERENCES sessions(id)
+);
+
+-- 20. HITL Requests
+CREATE TABLE IF NOT EXISTS hitl_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    checkpoint_id TEXT,
+    stage TEXT,
+    status TEXT DEFAULT 'pending',
+    decision TEXT,
+    feedback TEXT,
+    FOREIGN KEY(session_id) REFERENCES sessions(id),
+    FOREIGN KEY(checkpoint_id) REFERENCES checkpoints(id)
+);
+
+-- 21. User Preferences
+CREATE TABLE IF NOT EXISTS user_preferences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT,
+    preferred_language TEXT,
+    framework TEXT,
+    tech_stack TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

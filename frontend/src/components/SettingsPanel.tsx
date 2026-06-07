@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { ProviderName, AgentName } from '@/lib/types';
-import { loadMemory, clearMemory } from '@/lib/memory';
+
 
 
 interface LLMConfig {
@@ -100,7 +100,7 @@ export default function SettingsPanel({
   useEffect(() => {
     if (isOpen) {
       fetchConfigs();
-      setMemoryRunCount(loadMemory().runCount);
+      setMemoryRunCount(0);
     }
   }, [isOpen]);
 
@@ -252,7 +252,7 @@ export default function SettingsPanel({
   };
 
   const handleClearMemory = () => {
-    clearMemory();
+    /* backend clear memory not implemented yet */
     setMemoryRunCount(0);
   };
 

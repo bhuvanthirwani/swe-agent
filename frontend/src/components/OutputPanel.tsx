@@ -52,14 +52,14 @@ export default function OutputPanel({ selectedAgent, agentResults }: OutputPanel
             <div className="output-section animate-fade-in">
                 <div className="output-header">
                     <div className="output-title">
-                        <span>{config.icon}</span>
-                        {config.displayName}
+                        <span>{config?.icon || '⚙️'}</span>
+                        {config?.displayName || selectedAgent}
                     </div>
                 </div>
                 <div className="output-body">
                     <div className="output-empty">
                         <div className="output-empty-icon">⏳</div>
-                        <div className="output-empty-text">Waiting for {config.displayName} to run...</div>
+                        <div className="output-empty-text">Waiting for {config?.displayName || selectedAgent} to run...</div>
                     </div>
                 </div>
             </div>
@@ -72,7 +72,7 @@ export default function OutputPanel({ selectedAgent, agentResults }: OutputPanel
                 <div className="output-header">
                     <div className="output-title" style={{ color: 'var(--accent-rose)' }}>
                         <span>❌</span>
-                        {config.displayName} — Error
+                        {config?.displayName || selectedAgent} — Error
                     </div>
                 </div>
                 <div className="output-body">
@@ -198,8 +198,8 @@ export default function OutputPanel({ selectedAgent, agentResults }: OutputPanel
         <div className="output-section animate-fade-in">
             <div className="output-header">
                 <div className="output-title">
-                    <span>{config.icon}</span>
-                    {config.displayName}
+                    <span>{config?.icon || '⚙️'}</span>
+                    {config?.displayName || selectedAgent}
                     {result.iterationNumber && (
                         <span className="pipeline-iteration-badge" style={{ marginLeft: '8px' }}>
                             v{result.iterationNumber}

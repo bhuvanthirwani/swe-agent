@@ -3,6 +3,8 @@ from backend.core.database import get_db_connection
 from backend.core.tools_runtime import ToolsRuntimeEngine
 from backend.core.providers import LLMProvider
 from backend.models.interfaces import AgentConfig, LLMConfig, ToolConfig, AgentInput, AgentOutput
+from backend.models.schemas import AnalystOutputSchema, PlannerOutputSchema, ReviewerOutputSchema, SecurityOutputSchema
+from pydantic import ValidationError
 
 class UniversalAgentRuntime:
     def __init__(self, agent_id: int):
@@ -76,8 +78,25 @@ class UniversalAgentRuntime:
             
             try:
                 result_data = json.loads(clean_text)
+                
+                # Validate output schema
+                if self.config.name == "requirements-analyst":
+                    AnalystOutputSchema(**result_data)
+                elif self.config.name == "task-planner":
+                    PlannerOutputSchema(**result_data)
+                elif self.config.name in ["code-reviewer", "compliance-agent", "debt-scanner"]:
+                    ReviewerOutputSchema(**result_data)
+                elif self.config.name == "security-reviewer":
+                    SecurityOutputSchema(**result_data)
+                    
             except json.JSONDecodeError:
                 result_data = {"raw_output": clean_text}
+            except ValidationError as ve:
+                return AgentOutput(
+                    status="failed",
+                    output_result={"error": f"Schema validation failed", "raw_output": clean_text},
+                    error_logs=str(ve)
+                )
                 
             return AgentOutput(
                 status="success",

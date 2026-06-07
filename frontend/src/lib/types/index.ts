@@ -299,7 +299,6 @@ export interface AgentConfig {
   model: string;
   icon: string;
   color: string;
-  maxTokens: number;
 }
 
 // Pipeline history — persisted runs
@@ -345,7 +344,6 @@ export async function fetchAgentConfigs() {
         model: a.type,
         icon: a.icon || '⚙️',
         color: a.color || '#6366f1',
-        maxTokens: a.max_tokens || 2048,
       };
     }
     AGENT_CONFIGS = newConfigs;
