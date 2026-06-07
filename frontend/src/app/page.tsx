@@ -10,6 +10,7 @@ import { Role, canManageSettings, canManageWorkflows, canRunPipeline, fetchRBACR
 import { computeROI, saveROIEntry, ROIMetrics } from '@/lib/roi';
 import { TechnicalDebtReport } from '@/lib/agents/debtScanner';
 import { ComplianceReport } from '@/lib/agents/complianceAgent';
+import { loadMemory, updateMemory, extractPreferencesFromAnalystOutput } from '@/lib/memory';
 import RequirementInput from '@/components/RequirementInput';
 import PipelineView from '@/components/PipelineView';
 import OutputPanel from '@/components/OutputPanel';
