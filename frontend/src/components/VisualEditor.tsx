@@ -1,7 +1,7 @@
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { DAGNodeType, DAGWorkflow, DAGNode, DAGEdge } from '@/lib/flows/dagExecutor';
 import { AGENT_CONFIGS, AgentName } from '@/lib/types';
-import { AVAILABLE_CONNECTORS } from '@/lib/connectors';
+import { fetchConnectors, Connector } from '@/lib/connectors';
 
 interface VisualEditorProps {
   onRunWorkflow: (workflowId: string) => void;
@@ -14,6 +14,7 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
   const [workflows, setWorkflows] = useState<DAGWorkflow[]>([]);
   const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
@@ -24,8 +25,10 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
   const [edgeSource, setEdgeSource] = useState<string | null>(null);
 
   const canvasRef = useRef<HTMLDivElement>(null);
+  const [connectors, setConnectors] = useState<Connector[]>([]);
 
   useEffect(() => {
+    fetchConnectors().then(setConnectors).catch(console.error);
     fetch('/api/workflows')
       .then(res => res.json())
       .then((data: DAGWorkflow[]) => {
@@ -42,6 +45,7 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
     [workflows, activeWorkflowId]
   );
   const selectedNode = activeWorkflow?.nodes.find((n) => n.id === selectedNodeId) ?? null;
+  const selectedEdge = activeWorkflow?.edges.find((e) => e.id === selectedEdgeId) ?? null;
 
   const handleCreateWorkflow = () => {
     const newWorkflow = {
@@ -161,6 +165,14 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
     ));
   };
 
+  const updateSelectedEdge = (updates: Partial<DAGEdge>) => {
+    setWorkflows(prev => prev.map(wf => 
+      wf.id === activeWorkflowId 
+        ? { ...wf, edges: wf.edges.map(e => e.id === selectedEdgeId ? { ...e, ...updates } : e) }
+        : wf
+    ));
+  };
+
   const getNodeColor = (type: DAGNodeType, agentName?: AgentName) => {
     if (type === 'agent' && agentName) return AGENT_CONFIGS[agentName]?.color ?? '#6366f1';
     if (type === 'condition') return '#f59e0b';
@@ -186,10 +198,13 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
   const renderEdges = () => {
     if (!activeWorkflow) return null;
     return (
-      <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 1 }}>
+      <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 1, overflow: 'visible' }}>
         <defs>
           <marker id="ve-arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
             <polygon points="0 0, 10 3.5, 0 7" fill="rgba(255,255,255,0.35)" />
+          </marker>
+          <marker id="ve-arrow-selected" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#6366f1" />
           </marker>
         </defs>
         {activeWorkflow.edges.map((edge) => {
@@ -203,13 +218,17 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
           const endY = toNode.y * zoom;
           const midY = startY + (endY - startY) * 0.5;
           const path = `M ${startX} ${startY} C ${startX} ${midY}, ${endX} ${midY}, ${endX} ${endY}`;
+          const isEdgeSelected = edge.id === selectedEdgeId;
 
           return (
-            <g key={edge.id}>
-              <path d={path} fill="none" stroke="rgba(148,163,184,0.45)" strokeWidth={2} markerEnd="url(#ve-arrow)" />
-              {edge.label && (
-                <text x={(startX + endX) / 2} y={midY - 6} fill="#a5b4fc" fontSize="10" textAnchor="middle">
-                  {edge.label}
+            <g key={edge.id} style={{ pointerEvents: 'auto', cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); setSelectedNodeId(null); setSelectedEdgeId(edge.id); }}>
+              {/* Invisible thicker hit area for easy clicking */}
+              <path d={path} fill="none" stroke="transparent" strokeWidth={20} />
+              <path d={path} fill="none" stroke={isEdgeSelected ? "#6366f1" : "rgba(148,163,184,0.45)"} strokeWidth={isEdgeSelected ? 3 : 2} markerEnd={isEdgeSelected ? "url(#ve-arrow-selected)" : "url(#ve-arrow)"} />
+              {(edge.label || edge.description) && (
+                <text x={(startX + endX) / 2} y={midY - 6} fill={isEdgeSelected ? "#c7d2fe" : "#a5b4fc"} fontSize="10" textAnchor="middle">
+                  {edge.label && <tspan x={(startX + endX) / 2} dy="-0.2em" fontWeight={isEdgeSelected ? "bold" : "normal"}>{edge.label}</tspan>}
+                  {edge.description && <tspan x={(startX + endX) / 2} dy="1.4em" fill="#9ca3af" fontSize="9">{edge.description.length > 30 ? edge.description.substring(0, 30) + '...' : edge.description}</tspan>}
                 </text>
               )}
             </g>
@@ -239,7 +258,7 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
             return (
               <button
                 key={wf.id}
-                onClick={() => { setActiveWorkflowId(wf.id); setSelectedNodeId(null); }}
+                onClick={() => { setActiveWorkflowId(wf.id); setSelectedNodeId(null); setSelectedEdgeId(null); }}
                 style={{
                   textAlign: 'left', padding: '10px 12px', borderRadius: '10px',
                   border: active ? '1px solid rgba(99,102,241,0.5)' : '1px solid var(--border-primary)',
@@ -304,6 +323,11 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
 
         <div
           ref={canvasRef}
+          onClick={() => {
+            setSelectedNodeId(null);
+            setSelectedEdgeId(null);
+            if (edgeSource) setEdgeSource(null);
+          }}
           onMouseMove={handleCanvasMouseMove}
           onMouseUp={stopDragging}
           onMouseLeave={stopDragging}
@@ -346,7 +370,7 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
               return (
                 <div
                   key={node.id}
-                  onClick={() => handleNodeClick(node.id)}
+                  onClick={(e) => { e.stopPropagation(); handleNodeClick(node.id); setSelectedEdgeId(null); }}
                   onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
                   style={{
                     position: 'absolute', left: node.x * zoom, top: node.y * zoom, 
@@ -387,11 +411,44 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
 
       <aside style={{ borderLeft: '1px solid var(--border-primary)', background: 'rgba(10,14,24,0.9)', padding: '14px', overflowY: 'auto' }}>
         <div style={{ fontSize: '11px', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '8px' }}>
-          Node Inspector
+          {selectedNode ? 'Node Inspector' : selectedEdge ? 'Edge Inspector' : 'Workflow Config'}
         </div>
-        {!selectedNode && (
-          <div style={{ padding: '12px', borderRadius: '10px', border: '1px solid var(--border-primary)', background: 'rgba(255,255,255,0.03)', color: 'var(--text-secondary)', fontSize: '12px', lineHeight: 1.6 }}>
-            Select a node to inspect and edit configuration.
+        {!selectedNode && !selectedEdge && activeWorkflow && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ padding: '10px', borderRadius: '9px', border: '1px solid var(--border-primary)', background: 'rgba(255,255,255,0.03)' }}>
+              <div style={{ color: 'var(--text-muted)', fontSize: '12px', marginBottom: '6px' }}>Workflow Name</div>
+              <input 
+                type="text" 
+                value={activeWorkflow.name} 
+                onChange={(e) => setWorkflows(prev => prev.map(w => w.id === activeWorkflow.id ? { ...w, name: e.target.value } : w))}
+                style={{ width: '100%', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-primary)', color: 'white', padding: '8px', borderRadius: '4px', outline: 'none', fontSize: '12px' }}
+              />
+            </div>
+            
+            <div style={{ padding: '10px', borderRadius: '9px', border: '1px solid var(--border-primary)', background: 'rgba(255,255,255,0.03)' }}>
+              <div style={{ color: 'var(--text-muted)', fontSize: '12px', marginBottom: '6px' }}>Cron Schedule (e.g. */5 * * * *)</div>
+              <input 
+                type="text" 
+                placeholder="Leave blank for manual trigger only"
+                value={activeWorkflow.cron_schedule || ''} 
+                onChange={(e) => setWorkflows(prev => prev.map(w => w.id === activeWorkflow.id ? { ...w, cron_schedule: e.target.value } : w))}
+                style={{ width: '100%', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-primary)', color: 'white', padding: '8px', borderRadius: '4px', outline: 'none', fontSize: '12px' }}
+              />
+              <div style={{ color: 'var(--text-muted)', fontSize: '10px', marginTop: '6px', lineHeight: 1.4 }}>
+                A standard Cron string. Examples:<br/>
+                <b>*/5 * * * *</b> (Every 5 mins)<br/>
+                <b>0 * * * *</b> (Hourly)
+              </div>
+            </div>
+            
+            <div style={{ padding: '10px', borderRadius: '9px', border: '1px solid var(--border-primary)', background: 'rgba(255,255,255,0.03)' }}>
+              <div style={{ color: 'var(--text-muted)', fontSize: '12px', marginBottom: '6px' }}>Description</div>
+              <textarea 
+                value={activeWorkflow.description || ''} 
+                onChange={(e) => setWorkflows(prev => prev.map(w => w.id === activeWorkflow.id ? { ...w, description: e.target.value } : w))}
+                style={{ width: '100%', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-primary)', color: 'white', padding: '8px', borderRadius: '4px', outline: 'none', fontSize: '12px', minHeight: '60px', resize: 'vertical' }}
+              />
+            </div>
           </div>
         )}
         {selectedNode && (
@@ -436,7 +493,7 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
                   style={{ width: '100%', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-primary)', color: 'white', padding: '6px', borderRadius: '4px' }}
                 >
                   <option value="">-- Select Connector --</option>
-                  {AVAILABLE_CONNECTORS.map(conn => (
+                  {connectors.map(conn => (
                     <option key={conn.id} value={conn.id}>{conn.icon} {conn.name}</option>
                   ))}
                 </select>
@@ -452,16 +509,66 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
             
             <button 
               onClick={() => {
+                setSelectedNodeId(null);
+                setSelectedEdgeId(null);
                 setWorkflows(prev => prev.map(wf => wf.id === activeWorkflowId ? {
                   ...wf, 
                   nodes: wf.nodes.filter(n => n.id !== selectedNode.id),
                   edges: wf.edges.filter(e => e.from !== selectedNode.id && e.to !== selectedNode.id)
                 } : wf));
-                setSelectedNodeId(null);
               }}
               style={{ padding: '8px', borderRadius: '6px', background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.4)', cursor: 'pointer', fontSize: '12px', fontWeight: 600, marginTop: '10px' }}
             >
               Delete Node
+            </button>
+          </div>
+        )}
+        
+        {selectedEdge && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ padding: '10px', borderRadius: '9px', border: '1px solid var(--border-primary)', background: 'rgba(255,255,255,0.03)', fontSize: '12px' }}>
+              <div style={{ color: 'var(--text-muted)', marginBottom: '6px' }}>Edge ID</div>
+              <div style={{ color: '#cbd5e1', fontFamily: 'var(--font-mono)' }}>{selectedEdge.id}</div>
+              <div style={{ color: 'var(--text-muted)', marginTop: '8px', marginBottom: '6px' }}>Transition</div>
+              <div style={{ color: '#a5b4fc', fontSize: '11px' }}>
+                {activeWorkflow?.nodes.find(n => n.id === selectedEdge.from)?.label || selectedEdge.from} 
+                <span style={{ margin: '0 5px' }}>→</span> 
+                {activeWorkflow?.nodes.find(n => n.id === selectedEdge.to)?.label || selectedEdge.to}
+              </div>
+            </div>
+
+            <div style={{ padding: '10px', borderRadius: '9px', border: '1px solid var(--border-primary)', background: 'rgba(255,255,255,0.03)' }}>
+              <div style={{ color: 'var(--text-muted)', fontSize: '12px', marginBottom: '6px' }}>Label (Short)</div>
+              <input 
+                type="text" 
+                placeholder="e.g. Approved"
+                value={selectedEdge.label || ''} 
+                onChange={(e) => updateSelectedEdge({ label: e.target.value })}
+                style={{ width: '100%', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-primary)', color: 'white', padding: '8px', borderRadius: '4px', outline: 'none', fontSize: '12px' }}
+              />
+            </div>
+            
+            <div style={{ padding: '10px', borderRadius: '9px', border: '1px solid var(--border-primary)', background: 'rgba(255,255,255,0.03)' }}>
+              <div style={{ color: 'var(--text-muted)', fontSize: '12px', marginBottom: '6px' }}>Description (Instructions)</div>
+              <textarea 
+                placeholder="Detailed context for the target node..."
+                value={selectedEdge.description || ''} 
+                onChange={(e) => updateSelectedEdge({ description: e.target.value })}
+                style={{ width: '100%', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-primary)', color: 'white', padding: '8px', borderRadius: '4px', outline: 'none', fontSize: '12px', minHeight: '100px', resize: 'vertical' }}
+              />
+            </div>
+
+            <button 
+              onClick={() => {
+                setWorkflows(prev => prev.map(wf => wf.id === activeWorkflowId ? {
+                  ...wf, 
+                  edges: wf.edges.filter(e => e.id !== selectedEdge.id)
+                } : wf));
+                setSelectedEdgeId(null);
+              }}
+              style={{ padding: '8px', borderRadius: '6px', background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.4)', cursor: 'pointer', fontSize: '12px', fontWeight: 600, marginTop: '10px' }}
+            >
+              Delete Edge
             </button>
           </div>
         )}

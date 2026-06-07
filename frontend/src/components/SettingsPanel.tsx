@@ -4,29 +4,6 @@ import { useState, useEffect } from 'react';
 import { ProviderName, AgentName } from '@/lib/types';
 import { loadMemory, clearMemory } from '@/lib/memory';
 
-const PROVIDERS: ProviderName[] = ['groq', 'openai', 'anthropic', 'ollama', 'google', 'aws-bedrock', 'azure-openai'];
-
-const PROVIDER_DISPLAY: Record<ProviderName, { label: string; color: string; icon: string }> = {
-  groq: { label: 'Groq', color: '#f97316', icon: '⚡' },
-  openai: { label: 'OpenAI', color: '#10a37f', icon: '🤖' },
-  anthropic: { label: 'Anthropic', color: '#c8a2e9', icon: '🔮' },
-  ollama: { label: 'Ollama (Local)', color: '#6366f1', icon: '🦙' },
-  google: { label: 'Google Gemini', color: '#4285F4', icon: '✨' },
-  'aws-bedrock': { label: 'AWS Bedrock', color: '#FF9900', icon: '☁️' },
-  'azure-openai': { label: 'Azure OpenAI', color: '#0078D4', icon: '💼' },
-};
-
-const AGENT_DISPLAY_NAMES: Record<string, string> = {
-  'requirements-analyst': '🔍 Requirements Analyst',
-  'task-planner': '📋 Task Planner',
-  'developer': '💻 Developer',
-  'code-reviewer': '🔎 Code Reviewer',
-  'security-reviewer': '🛡️ Security Reviewer',
-  'testing-agent': '🧪 Testing Agent',
-  'deployment-agent': '🚀 Deployment Agent',
-  'suggestion-agent': '💡 Suggestion Agent',
-  'router-agent': '🧭 Router Agent'
-};
 
 interface LLMConfig {
   id: number;
@@ -51,25 +28,29 @@ export default function SettingsPanel({
   onHITLToggle,
 }: SettingsPanelProps) {
   const [llmConfigs, setLlmConfigs] = useState<LLMConfig[]>([]);
+  const [llmProviders, setLlmProviders] = useState<any[]>([]);
   const [agentLlms, setAgentLlms] = useState<Record<string, number>>({});
   
   const [githubToken, setGithubToken] = useState('');
   const [githubOwner, setGithubOwner] = useState('');
+  const [slackWebhook, setSlackWebhook] = useState('');
+  const [slackToken, setSlackToken] = useState('');
+  const [agents, setAgents] = useState<any[]>([]);
   
   const [saved, setSaved] = useState(false);
   const [memoryRunCount, setMemoryRunCount] = useState(0);
-  const [activeTab, setActiveTab] = useState<'providers' | 'agents' | 'delivery' | 'memory'>('providers');
+  const [activeTab, setActiveTab] = useState<'providers' | 'agents' | 'connectors' | 'memory'>('providers');
 
   const [isTesting, setIsTesting] = useState(false);
   const [testStatus, setTestStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [slackTestStatus, setSlackTestStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
   // Form for new LLM Config
   const [editingLLMId, setEditingLLMId] = useState<number | null>(null);
   const [newName, setNewName] = useState('');
-  const [newProvider, setNewProvider] = useState<ProviderName>('groq');
+  const [newProviderId, setNewProviderId] = useState<number>(0);
   const [newModelName, setNewModelName] = useState('');
   const [newApiKey, setNewApiKey] = useState('');
-  const [newBaseUrl, setNewBaseUrl] = useState('');
 
   const fetchConfigs = async () => {
     try {
@@ -78,9 +59,21 @@ export default function SettingsPanel({
         setLlmConfigs(await res.json());
       }
       
-      const resAgents = await fetch('/api/agent_llms');
-      if (resAgents.ok) {
-        setAgentLlms(await resAgents.json());
+      const resAgentsMapping = await fetch('/api/agent_llms');
+      if (resAgentsMapping.ok) {
+        setAgentLlms(await resAgentsMapping.json());
+      }
+      
+      const resAgentsList = await fetch('/api/agents');
+      if (resAgentsList.ok) {
+        setAgents(await resAgentsList.json());
+      }
+
+      const resProviders = await fetch('/api/llm_providers');
+      if (resProviders.ok) {
+        const providers = await resProviders.json();
+        setLlmProviders(providers);
+        if (providers.length > 0 && newProviderId === 0) setNewProviderId(providers[0].id);
       }
 
       const resService = await fetch('/api/service_integrations/github_mcp');
@@ -91,6 +84,13 @@ export default function SettingsPanel({
         if (data.github_token) {
           setTestStatus('success');
         }
+      }
+
+      const resSlack = await fetch('/api/service_integrations/slack');
+      if (resSlack.ok) {
+        const data = await resSlack.json();
+        setSlackWebhook(data.webhookUrl || '');
+        setSlackToken(data.token || '');
       }
     } catch (err) {
       console.error(err);
@@ -114,17 +114,15 @@ export default function SettingsPanel({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: newName,
-          provider: newProvider,
+          provider_id: newProviderId,
           model_name: newModelName,
-          api_key: newApiKey || undefined,
-          base_url: newBaseUrl || undefined
+          api_key: newApiKey || undefined
         })
       });
       if (res.ok) {
         setNewName('');
         setNewModelName('');
         setNewApiKey('');
-        setNewBaseUrl('');
         setEditingLLMId(null);
         fetchConfigs();
       }
@@ -133,13 +131,12 @@ export default function SettingsPanel({
     }
   };
 
-  const handleEditLLM = (config: LLMConfig) => {
+  const handleEditLLM = (config: any) => {
     setEditingLLMId(config.id);
     setNewName(config.name);
-    setNewProvider(config.provider as ProviderName);
+    setNewProviderId(config.provider_id);
     setNewModelName(config.model_name);
     setNewApiKey(config.api_key || '');
-    setNewBaseUrl(config.base_url || '');
   };
 
   const handleCancelEdit = () => {
@@ -147,7 +144,6 @@ export default function SettingsPanel({
     setNewName('');
     setNewModelName('');
     setNewApiKey('');
-    setNewBaseUrl('');
   };
 
   const handleDeleteLLM = async (id: number) => {
@@ -199,6 +195,31 @@ export default function SettingsPanel({
     }
   };
 
+  const handleTestSlack = async () => {
+    setIsTesting(true);
+    setSlackTestStatus('idle');
+    try {
+      const res = await fetch('/api/slack/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          webhook_url: slackWebhook,
+          token: slackToken || undefined
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.status === 'success') {
+        setSlackTestStatus('success');
+      } else {
+        setSlackTestStatus('error');
+      }
+    } catch (err) {
+      setSlackTestStatus('error');
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
   const save = async () => {
     try {
       await fetch('/api/service_integrations', {
@@ -209,6 +230,17 @@ export default function SettingsPanel({
           metadata: {
             github_token: githubToken,
             github_owner: githubOwner
+          }
+        })
+      });
+      await fetch('/api/service_integrations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          service_name: 'slack',
+          metadata: {
+            webhookUrl: slackWebhook,
+            token: slackToken
           }
         })
       });
@@ -305,9 +337,9 @@ export default function SettingsPanel({
 
         {/* Tabs */}
         <div style={{ display: 'flex', gap: '4px', marginBottom: '24px', padding: '4px', background: 'rgba(0,0,0,0.3)', borderRadius: '10px' }}>
-          {(['providers', 'agents', 'delivery', 'memory'] as const).map(tab => (
+          {(['providers', 'agents', 'connectors', 'memory'] as const).map(tab => (
             <button key={tab} onClick={() => setActiveTab(tab)} style={tabStyle(activeTab === tab)}>
-              {{ providers: '🔑 Providers', agents: '🤖 Agent Models', delivery: '📦 Delivery', memory: '🧠 Memory' }[tab]}
+              {{ providers: '🔑 Providers', agents: '🤖 Agent Models', connectors: '🔌 Connectors', memory: '🧠 Memory' }[tab]}
             </button>
           ))}
         </div>
@@ -324,8 +356,8 @@ export default function SettingsPanel({
                 {llmConfigs.map(config => (
                   <div key={config.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px', background: 'rgba(255,255,255,0.05)', borderRadius: '8px' }}>
                     <div>
-                      <div style={{ fontSize: '14px', fontWeight: 'bold' }}>{PROVIDER_DISPLAY[config.provider as ProviderName]?.icon} {config.name}</div>
-                      <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{config.provider} - {config.model_name} {config.base_url ? `(${config.base_url})` : ''}</div>
+                      <div style={{ fontSize: '14px', fontWeight: 'bold' }}>{config.name}</div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{(config as any).provider_name} - {config.model_name}</div>
                     </div>
                     <div style={{ display: 'flex', gap: '8px' }}>
                       <button onClick={() => handleEditLLM(config)} style={{ background: 'transparent', color: '#6366f1', border: '1px solid #6366f1', borderRadius: '4px', padding: '4px 8px', cursor: 'pointer' }}>Edit</button>
@@ -338,13 +370,12 @@ export default function SettingsPanel({
               <div style={{ padding: '16px', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '10px' }}>
                 <div style={{ fontSize: '13px', fontWeight: 600, color: '#fff', marginBottom: '12px' }}>Add New LLM</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <select value={newProvider} onChange={e => setNewProvider(e.target.value as ProviderName)} style={inputStyle}>
-                    {PROVIDERS.map(p => <option key={p} value={p}>{PROVIDER_DISPLAY[p].label}</option>)}
+                  <select value={newProviderId} onChange={e => setNewProviderId(parseInt(e.target.value))} style={inputStyle}>
+                    {llmProviders.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                   <input type="text" placeholder="Display Name (e.g. Developer Agent)" value={newName} onChange={e => setNewName(e.target.value)} style={inputStyle} />
                   <input type="text" placeholder="Model Name (e.g. gpt-4o)" value={newModelName} onChange={e => setNewModelName(e.target.value)} style={inputStyle} />
                   <input type="password" placeholder="API Key (optional if in env)" value={newApiKey} onChange={e => setNewApiKey(e.target.value)} style={inputStyle} />
-                  <input type="text" placeholder="Base URL (optional, e.g. local Ollama)" value={newBaseUrl} onChange={e => setNewBaseUrl(e.target.value)} style={inputStyle} />
                   <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
                     <button onClick={handleAddLLM} style={{ padding: '8px 16px', background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1', color: '#818cf8', borderRadius: '8px', cursor: 'pointer', flex: 1 }}>
                       {editingLLMId ? '💾 Update LLM' : '+ Add LLM'}
@@ -368,19 +399,19 @@ export default function SettingsPanel({
             <p style={{ margin: '0 0 8px', fontSize: '12px', color: 'var(--text-muted)' }}>
               Map each agent to an LLM configuration created in the Providers tab.
             </p>
-            {Object.keys(AGENT_DISPLAY_NAMES).map((agent) => (
-              <div key={agent} style={{
+            {agents.map((agent) => (
+              <div key={agent.name} style={{
                 padding: '12px 14px',
                 background: 'rgba(255,255,255,0.03)',
                 border: '1px solid rgba(255,255,255,0.07)',
                 borderRadius: '10px',
               }}>
-                <div style={{ fontSize: '13px', fontWeight: 600, color: '#fff', marginBottom: '10px' }}>
-                  {AGENT_DISPLAY_NAMES[agent]}
+                <div style={{ fontSize: '13px', fontWeight: 600, color: '#fff', marginBottom: '10px', textTransform: 'capitalize' }}>
+                  {agent.name.replace('-', ' ')}
                 </div>
                 <select
-                  value={agentLlms[agent] || ''}
-                  onChange={e => handleAgentLLMChange(agent, parseInt(e.target.value))}
+                  value={agentLlms[agent.name] || ''}
+                  onChange={e => handleAgentLLMChange(agent.name, parseInt(e.target.value))}
                   style={inputStyle}
                 >
                   <option value="" disabled>Select LLM...</option>
@@ -393,9 +424,76 @@ export default function SettingsPanel({
           </div>
         )}
 
-        {/* Tab: Delivery (Gap #5 MCP) */}
-        {activeTab === 'delivery' && (
+        {/* Tab: Connectors */}
+        {activeTab === 'connectors' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div style={{
+              padding: '16px',
+              background: 'rgba(239,68,68,0.06)',
+              border: '1px solid rgba(239,68,68,0.15)',
+              borderRadius: '10px',
+            }}>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: '#fff', marginBottom: '4px' }}>
+                💬 Slack Integration
+              </div>
+              <p style={{ margin: '0 0 16px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                Connect to Slack to receive workflow notifications and Human-in-the-Loop approval requests.
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                    Slack Webhook URL
+                  </label>
+                  <input
+                    type="password"
+                    placeholder="https://hooks.slack.com/services/..."
+                    value={slackWebhook}
+                    onChange={e => setSlackWebhook(e.target.value)}
+                    style={inputStyle}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                    Slack Token (Optional, for Web API)
+                  </label>
+                  <input
+                    type="password"
+                    placeholder="xoxb-..."
+                    value={slackToken}
+                    onChange={e => { setSlackToken(e.target.value); setSlackTestStatus('idle'); }}
+                    style={inputStyle}
+                  />
+                </div>
+                <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                  <button
+                    onClick={handleTestSlack}
+                    disabled={isTesting || !slackWebhook}
+                    style={{
+                      padding: '8px 16px',
+                      background: 'rgba(239,68,68,0.2)',
+                      border: '1px solid #ef4444',
+                      color: '#fca5a5',
+                      borderRadius: '8px',
+                      cursor: isTesting || !slackWebhook ? 'not-allowed' : 'pointer',
+                      opacity: isTesting || !slackWebhook ? 0.6 : 1,
+                    }}
+                  >
+                    {isTesting ? 'Testing...' : 'Test Connection'}
+                  </button>
+                  {slackTestStatus === 'success' && (
+                    <div style={{ display: 'flex', alignItems: 'center', color: '#10b981', fontSize: '13px', fontWeight: 600 }}>
+                      ✅ Connection Successful
+                    </div>
+                  )}
+                  {slackTestStatus === 'error' && (
+                    <div style={{ display: 'flex', alignItems: 'center', color: '#ef4444', fontSize: '13px', fontWeight: 600 }}>
+                      ❌ Invalid Webhook/Token
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
             <div style={{
               padding: '16px',
               background: 'rgba(99,102,241,0.06)',

@@ -12,7 +12,7 @@ router = APIRouter()
 DATABASE_PATH = os.getenv("DATABASE_PATH", "swe_agent.db")
 
 def get_db():
-    conn = sqlite3.connect(DATABASE_PATH)
+    conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -25,6 +25,7 @@ class WorkflowResponse(BaseModel):
     description: Optional[str] = None
     version: str
     entry_node_id: Optional[str] = None
+    cron_schedule: Optional[str] = None
     nodes: List[Dict[str, Any]]
     edges: List[Dict[str, Any]]
     created_at: str
@@ -35,6 +36,7 @@ class WorkflowCreate(BaseModel):
     description: Optional[str] = None
     version: Optional[str] = '1.0'
     entry_node_id: Optional[str] = None
+    cron_schedule: Optional[str] = None
     nodes: List[Dict[str, Any]] = []
     edges: List[Dict[str, Any]] = []
 
@@ -43,6 +45,7 @@ class WorkflowUpdate(BaseModel):
     description: Optional[str] = None
     version: Optional[str] = None
     entry_node_id: Optional[str] = None
+    cron_schedule: Optional[str] = None
     nodes: Optional[List[Dict[str, Any]]] = None
     edges: Optional[List[Dict[str, Any]]] = None
 
@@ -61,6 +64,7 @@ def get_workflows(db: sqlite3.Connection = Depends(get_db)):
                 description=row["description"],
                 version=row["version"],
                 entry_node_id=row["entry_node_id"],
+                cron_schedule=dict(row).get("cron_schedule"),
                 nodes=json.loads(row["nodes_json"]),
                 edges=json.loads(row["edges_json"]),
                 created_at=row["created_at"],
@@ -86,6 +90,7 @@ def get_workflow(workflow_id: str, db: sqlite3.Connection = Depends(get_db)):
         description=row["description"],
         version=row["version"],
         entry_node_id=row["entry_node_id"],
+        cron_schedule=dict(row).get("cron_schedule"),
         nodes=json.loads(row["nodes_json"]),
         edges=json.loads(row["edges_json"]),
         created_at=row["created_at"],
@@ -101,14 +106,15 @@ def create_workflow(workflow: WorkflowCreate, db: sqlite3.Connection = Depends(g
     
     cursor.execute(
         """INSERT INTO workflows 
-           (id, name, description, version, entry_node_id, nodes_json, edges_json, created_at, updated_at) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           (id, name, description, version, entry_node_id, cron_schedule, nodes_json, edges_json, created_at, updated_at) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             workflow_id, 
             workflow.name, 
             workflow.description, 
             workflow.version,
             workflow.entry_node_id,
+            workflow.cron_schedule,
             json.dumps(workflow.nodes),
             json.dumps(workflow.edges),
             now,
@@ -145,6 +151,9 @@ def update_workflow(workflow_id: str, workflow_update: WorkflowUpdate, db: sqlit
     if workflow_update.entry_node_id is not None:
         updates.append("entry_node_id = ?")
         params.append(workflow_update.entry_node_id)
+    if workflow_update.cron_schedule is not None:
+        updates.append("cron_schedule = ?")
+        params.append(workflow_update.cron_schedule if workflow_update.cron_schedule else None)
     if workflow_update.nodes is not None:
         updates.append("nodes_json = ?")
         params.append(json.dumps(workflow_update.nodes))

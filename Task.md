@@ -48,29 +48,44 @@ This document tracks the tasks required to build an automated, agentic workflow 
 - [ ] Update the original Slack message block in-place with execution progress (e.g., "🔄 Implementing...", "✅ Completed!").
 
 ## Phase 5: Dashboard, UI Control & Administration (Frontend)
-- [ ] Add the frontend feature to the existing codebase (e.g., `src/app/page.tsx`).
-- [ ] Create UI Suggestion panel displaying:
+- [x] Add the frontend feature to the existing codebase (e.g., `src/app/page.tsx`).
+- [x] Create UI Suggestion panel displaying:
   - Scanned projects
   - Suggestion cards
   - "Send to Slack" trigger (making an API call to the new Python backend)
   - Manual local approval trigger button (making an API call to the new Python backend)
-- [ ] **Tool Management Panel**:
+- [x] **Tool Management Panel**:
   - Create UI and backend APIs for adding, editing, and deleting Tools.
-- [ ] **Agent Management Panel**:
+- [x] **Agent Management Panel**:
   - Create UI and backend APIs for adding, editing, and deleting Agents.
   - The agent configuration form must capture:
-    - Basic details: Name, Type, and Description.
-    - The System Prompt.
-    - The specific Tools the agent has access to.
-    - The LLM configurations assigned to the agent.
-    - New entries for the `agent_tasks_registry` (to advertise the agent's capabilities).
-    - (Optional) Mandatory `workflow_triggers` to execute once this agent completes a specific task.
+    - [x] Basic details: Name, Type, and Description.
+    - [x] The System Prompt.
+    - [x] Input and Output Schemas (with code-editor style UI).
+    - [x] The specific Tools the agent has access to (multi-select checkboxes).
+    - [x] The LLM configurations assigned to the agent.
+    - [x] New entries for the `agent_tasks_registry` (to advertise the agent's capabilities).
+    - [x] (Optional) Mandatory `workflow_triggers` to execute once this agent completes a specific task.
+  - [x] **API Protection**: System locks agent mutations (edit/delete) if any workflow is currently running (`in_progress` or `paused`). Visual UI warning banner added.
+
+## Phase 5.5: Visual Editor & Workflow Interactions
+- [x] **Flowchart Aesthetics**:
+  - Connector Nodes (trigger/action) rendered as **Diamonds**.
+  - Condition Nodes rendered as **Hexagons**.
+  - Agent Nodes rendered as standard rectangular cards.
+- [x] **Edge Interactivity**:
+  - Edges are clickable via a transparent thicker hit area.
+  - Right sidebar switches to "Edge Inspector" on selection.
+  - Edges support `label` and `description` for providing connector context, rendered gracefully on the canvas with truncation.
 
 ## Phase 6: Complete Node.js to Python Migration
 This phase outlines the complete, from-scratch rewrite of the entire existing Node.js backend (`src/lib` and `src/app/api`) into the new Python `backend/` folder. This ensures the full application retains all existing functionality alongside the new agentic Slack workflow.
 
 ### 6.1 Core Orchestration & State Management
-- [ ] Migrate `src/lib/orchestrator.ts` to `backend/core/orchestrator.py` (Main DAG/workflow runner).
+- [x] Migrate `src/lib/orchestrator.ts` to `backend/core/orchestrator.py` (Main DAG/workflow runner).
+  - [x] **Intelligent DAG Execution Engine**: Supports Condition evaluation, Parallel forking, and Merge synchronization.
+  - [x] **Dead Path Elimination**: Cascades `skipped` state down un-taken condition branches to prevent merge deadlocks.
+  - [x] **Cron Scheduler**: Implemented a lightweight `croniter`-based `asyncio` loop to trigger workflows repeatedly without Celery.
 - [ ] Migrate `src/lib/memory.ts`, `history.ts`, and `sessions.ts` to `backend/core/state_management.py`.
 - [ ] Migrate `src/lib/hitl.ts` (Human-in-the-Loop) to integrate with the new SQLite schema and Slack approvals.
 - [ ] Migrate `src/lib/audit.ts` and `roi.ts` for tracking metrics and system audits.

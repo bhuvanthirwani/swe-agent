@@ -1,6 +1,7 @@
 import json
 from backend.core.database import get_db_connection
 from backend.core.tools_runtime import ToolsRuntimeEngine
+from backend.core.providers import LLMProvider
 from backend.models.interfaces import AgentConfig, LLMConfig, ToolConfig, AgentInput, AgentOutput
 
 class UniversalAgentRuntime:
@@ -19,8 +20,10 @@ class UniversalAgentRuntime:
                 
             # Load primary LLM
             llm_row = conn.execute('''
-                SELECT l.* FROM llm_configs l
+                SELECT l.id, l.model_name, l.api_key, p.name as provider_name, p.base_url 
+                FROM llm_configs l
                 JOIN agent_llms al ON l.id = al.llm_id
+                JOIN llm_providers p ON l.provider_id = p.id
                 WHERE al.agent_id = ? AND al.is_primary = 1
                 LIMIT 1
             ''', (agent_id,)).fetchone()
@@ -51,23 +54,38 @@ class UniversalAgentRuntime:
             conn.close()
 
     async def execute(self, input_data: AgentInput) -> AgentOutput:
-        # Construct the prompt with the system_prompt and input context
-        messages = [
-            {"role": "system", "content": self.config.system_prompt},
-            {"role": "user", "content": json.dumps(input_data.input_context)}
-        ]
-        
-        # In a real implementation, you would dynamically call the LLM based on self.config.llm
-        # using httpx to self.config.llm.base_url with self.config.llm.api_key.
-        
-        # Simulated LLM response
-        simulated_response = {
-            "thought": f"I am {self.config.name}. Executing task {input_data.task_id}.",
-            "action": "completed",
-            "result": {"status": "ok"}
-        }
-        
-        return AgentOutput(
-            status="success",
-            output_result=simulated_response
+        user_prompt = json.dumps(input_data.input_context)
+        print("Provider Details: ", self.config.llm.provider_name, self.config.llm.model_name, self.config.llm.api_key, self.config.llm.base_url)
+        provider = LLMProvider(
+            provider_name=self.config.llm.provider_name,
+            model_name=self.config.llm.model_name,
+            api_key=self.config.llm.api_key,
+            base_url=self.config.llm.base_url
         )
+
+        try:
+            # Generate the response
+            response_text = await provider.generate_sync(
+                system_prompt=self.config.system_prompt,
+                user_prompt=user_prompt
+            )
+            
+            # The agent system_prompt typically requests JSON output
+            # Clean up the markdown fences if any
+            clean_text = response_text.replace("```json", "").replace("```", "").strip()
+            
+            try:
+                result_data = json.loads(clean_text)
+            except json.JSONDecodeError:
+                result_data = {"raw_output": clean_text}
+                
+            return AgentOutput(
+                status="success",
+                output_result=result_data
+            )
+        except Exception as e:
+            return AgentOutput(
+                status="failed",
+                output_result={"error": str(e)},
+                error_logs=str(e)
+            )

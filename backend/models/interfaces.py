@@ -3,10 +3,10 @@ from typing import List, Dict, Optional, Any
 
 class LLMConfig(BaseModel):
     id: int
-    provider: str
+    provider_name: str
     model_name: str
-    api_key: Optional[str]
-    base_url: Optional[str]
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
 
 class ToolConfig(BaseModel):
     id: int

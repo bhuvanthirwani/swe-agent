@@ -36,10 +36,16 @@ CREATE TABLE IF NOT EXISTS tasks (
 -- 4. Registry of all available agents in the system
 CREATE TABLE IF NOT EXISTS agents (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE, -- e.g., 'Developer', 'CodeReviewer', 'ComplianceAgent', 'SecurityReviewer'
+    name TEXT NOT NULL UNIQUE, -- e.g., 'developer', 'code-reviewer'
+    display_name TEXT,
+    icon TEXT,
+    color TEXT,
+    max_tokens INTEGER,
     type TEXT NOT NULL, -- e.g., 'generator', 'reviewer', 'planner'
     description TEXT,
-    system_prompt TEXT -- System prompt providing exact instructions for the agent
+    system_prompt TEXT, -- System prompt providing exact instructions for the agent
+    input_schema TEXT,
+    output_schema TEXT
 );
 
 -- 4.5. Tools available to the agents, including database connection codes
@@ -87,14 +93,22 @@ CREATE TABLE IF NOT EXISTS artifacts (
     FOREIGN KEY(agent_run_id) REFERENCES agent_runs(id)
 );
 
--- 7. Configuration for LLM providers (Deterministic workflows)
+-- 7. Registry of LLM providers
+CREATE TABLE IF NOT EXISTS llm_providers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    base_url TEXT,
+    description TEXT
+);
+
+-- Configuration for LLM models (Deterministic workflows)
 CREATE TABLE IF NOT EXISTS llm_configs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    provider TEXT NOT NULL, -- e.g., 'openai', 'anthropic', 'groq'
+    provider_id INTEGER NOT NULL,
     model_name TEXT NOT NULL,
     api_key TEXT,
-    base_url TEXT
+    FOREIGN KEY(provider_id) REFERENCES llm_providers(id)
 );
 
 -- Mapping agents to their designated LLMs
@@ -144,6 +158,51 @@ CREATE TABLE IF NOT EXISTS workflows (
     entry_node_id TEXT,
     nodes_json TEXT NOT NULL,
     edges_json TEXT NOT NULL,
+    cron_schedule TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 12. Connectors
+CREATE TABLE IF NOT EXISTS connectors (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    icon TEXT,
+    enabled BOOLEAN DEFAULT 0,
+    config TEXT -- JSON string
+);
+
+-- 13. Roles & Permissions (RBAC)
+CREATE TABLE IF NOT EXISTS roles (
+    id TEXT PRIMARY KEY,
+    description TEXT
+);
+
+CREATE TABLE IF NOT EXISTS role_permissions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    role_id TEXT NOT NULL,
+    permission TEXT NOT NULL,
+    FOREIGN KEY(role_id) REFERENCES roles(id)
+);
+
+-- 14. Language Skills
+CREATE TABLE IF NOT EXISTS language_skills (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    file_extensions TEXT, -- JSON array of strings
+    run_command TEXT,
+    lint_command TEXT,
+    test_command TEXT
+);
+
+-- 15. RAG Knowledge Base
+CREATE TABLE IF NOT EXISTS knowledge_base (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    category TEXT,
+    tags TEXT -- JSON array
+);
+

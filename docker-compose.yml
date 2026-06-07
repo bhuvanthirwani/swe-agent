@@ -8,7 +8,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./backend/swe_agent.db:/app/backend/swe_agent.db
+      - ./backend:/app/backend
     environment:
       - DATABASE_PATH=/app/backend/swe_agent.db
       - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}

@@ -7,8 +7,9 @@ class WorkspaceAnalysisRequest(BaseModel):
 
 class OrchestrationRequest(BaseModel):
     requirement: str
-    resume_checkpoint_id: Optional[str] = None
-    hitl_enabled: bool = False
+    resume_checkpoint_id: Optional[str] = Field(None, alias="resumeCheckpointId")
+    hitl_enabled: bool = Field(False, alias="hitlEnabled")
+    workflow_id: Optional[str] = Field(None, alias="workflowId")
 
 class HITLResponse(BaseModel):
     request_id: str

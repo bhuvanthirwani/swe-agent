@@ -67,3 +67,31 @@ async def slack_interactive(request: Request):
                 return {"text": "Suggestion declined."}
 
     return {"status": "ok"}
+
+from pydantic import BaseModel
+from typing import Optional
+
+class SlackTestRequest(BaseModel):
+    webhook_url: str
+    token: Optional[str] = None
+
+@router.post("/slack/test")
+async def slack_test(req: SlackTestRequest):
+    import httpx
+    try:
+        async with httpx.AsyncClient() as client:
+            if req.webhook_url.startswith("https://hooks.slack.com"):
+                res = await client.post(req.webhook_url, json={"text": "Test message from Agentic Workflow!"})
+                res.raise_for_status()
+            elif req.token:
+                headers = {"Authorization": f"Bearer {req.token}"}
+                res = await client.post("https://slack.com/api/chat.postMessage", headers=headers, json={"channel": req.webhook_url, "text": "Test message from Agentic Workflow!"})
+                res.raise_for_status()
+                data = res.json()
+                if not data.get("ok"):
+                    raise Exception(data.get("error", "Unknown Slack API error"))
+            else:
+                raise Exception("Missing token for Web API or invalid webhook URL")
+        return {"status": "success"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}

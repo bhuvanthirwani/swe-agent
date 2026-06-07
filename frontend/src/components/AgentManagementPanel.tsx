@@ -25,6 +25,65 @@ export default function AgentManagementPanel({ isOpen, onClose }: { isOpen: bool
   const [editMode, setEditMode] = useState(false);
   const [editingAgentId, setEditingAgentId] = useState<number | null>(null);
   const [formData, setFormData] = useState<{name: string, type: string, description: string, system_prompt: string, input_schema: string, output_schema: string, tool_ids: number[]}>({ name: '', type: 'generator', description: '', system_prompt: '', input_schema: '', output_schema: '', tool_ids: [] });
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = React.useRef<any>(null);
+
+  const startListening = () => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Speech Recognition is not supported in this browser.");
+      return;
+    }
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = 'en-US';
+    
+    recognition.onstart = () => {
+      setIsListening(true);
+    };
+    
+    recognition.onresult = async (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      try {
+        const res = await fetch('/api/agents/generate-from-voice', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transcript })
+        });
+        if (res.ok) {
+          const generatedAgent = await res.json();
+          setFormData(prev => ({
+            ...prev,
+            name: generatedAgent.name || prev.name,
+            type: generatedAgent.type || prev.type,
+            description: generatedAgent.description || prev.description,
+            system_prompt: generatedAgent.system_prompt || prev.system_prompt,
+            input_schema: generatedAgent.input_schema || prev.input_schema,
+            output_schema: generatedAgent.output_schema || prev.output_schema
+          }));
+        }
+      } catch (err) {
+        console.error("Failed to generate agent from voice", err);
+      }
+    };
+    
+    recognition.onerror = (event: any) => {
+      console.error("Speech recognition error", event.error);
+      setIsListening(false);
+    };
+    
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+    
+    recognitionRef.current = recognition;
+    recognition.start();
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -147,6 +206,11 @@ export default function AgentManagementPanel({ isOpen, onClose }: { isOpen: bool
         )}
 
         <form onSubmit={submitAgent} style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginBottom: '30px', background: 'rgba(0,0,0,0.2)', padding: '20px', borderRadius: '12px' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '-5px' }}>
+            <button type="button" disabled={isLocked} onClick={startListening} style={{ padding: '8px 12px', borderRadius: '6px', background: isListening ? '#ef4444' : '#3b82f6', color: '#fff', border: 'none', cursor: isLocked ? 'not-allowed' : 'pointer', fontSize: '12px', fontWeight: 600, opacity: isLocked ? 0.5 : 1 }}>
+              {isListening ? '🛑 Listening...' : '🎙️ Generate from Voice'}
+            </button>
+          </div>
           <div style={{ display: 'flex', gap: '15px' }}>
             <input disabled={isLocked} required placeholder="Agent Name (e.g. Developer)" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', background: '#020617', color: '#fff', opacity: isLocked ? 0.5 : 1 }} />
             <select disabled={isLocked} value={formData.type} onChange={e => setFormData({ ...formData, type: e.target.value })} style={{ width: '150px', padding: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', background: '#020617', color: '#fff', opacity: isLocked ? 0.5 : 1 }}>

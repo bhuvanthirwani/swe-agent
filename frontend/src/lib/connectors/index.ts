@@ -64,58 +64,16 @@ export interface PipelineTrigger {
 
 // ─── Built-in Connector definitions ─────────────────────────
 
-export const AVAILABLE_CONNECTORS: Connector[] = [
-  {
-    id: 'slack',
-    type: 'slack',
-    name: 'Slack',
-    description: 'Send pipeline results and notifications to Slack channels',
-    icon: '💬',
-    enabled: false,
-    config: {},
-    events: [],
-  },
-  {
-    id: 'github',
-    type: 'github',
-    name: 'GitHub',
-    description: 'Push generated code to repositories, create PRs, and listen for issues',
-    icon: '🐙',
-    enabled: false,
-    config: {},
-    events: [],
-  },
-  {
-    id: 'email',
-    type: 'email',
-    name: 'Email (SMTP)',
-    description: 'Send pipeline results and audit reports via email',
-    icon: '📧',
-    enabled: false,
-    config: {},
-    events: [],
-  },
-  {
-    id: 'webhook',
-    type: 'webhook',
-    name: 'Custom Webhook',
-    description: 'Send pipeline events to any HTTP endpoint',
-    icon: '🔗',
-    enabled: false,
-    config: {},
-    events: [],
-  },
-  {
-    id: 'discord',
-    type: 'discord',
-    name: 'Discord',
-    description: 'Send pipeline notifications to Discord channels',
-    icon: '🎮',
-    enabled: false,
-    config: {},
-    events: [],
-  },
-];
+export async function fetchConnectors(): Promise<Connector[]> {
+  try {
+    const res = await fetch('/api/connectors');
+    if (!res.ok) throw new Error('Failed to fetch connectors');
+    return await res.json();
+  } catch (error) {
+    console.error(error);
+    return [];
+  }
+}
 
 // ─── Connector Actions ───────────────────────────────────────
 

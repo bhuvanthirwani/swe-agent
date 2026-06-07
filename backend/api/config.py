@@ -8,20 +8,37 @@ import json
 router = APIRouter()
 
 # --- LLM Configs API ---
+class LLMProviderResponse(BaseModel):
+    id: int
+    name: str
+    base_url: Optional[str] = None
+    description: Optional[str] = None
+
 class LLMConfigCreate(BaseModel):
     name: str
-    provider: str
+    provider_id: int
     model_name: str
     api_key: Optional[str] = None
-    base_url: Optional[str] = None
 
 class LLMConfigResponse(LLMConfigCreate):
     id: int
+    provider_name: str
+
+@router.get("/llm_providers", response_model=List[LLMProviderResponse])
+def get_llm_providers():
+    conn = get_db_connection()
+    providers = conn.execute("SELECT * FROM llm_providers").fetchall()
+    conn.close()
+    return [dict(p) for p in providers]
 
 @router.get("/llm_configs", response_model=List[LLMConfigResponse])
 def get_llm_configs():
     conn = get_db_connection()
-    configs = conn.execute("SELECT * FROM llm_configs").fetchall()
+    configs = conn.execute('''
+        SELECT c.*, p.name as provider_name 
+        FROM llm_configs c 
+        JOIN llm_providers p ON c.provider_id = p.id
+    ''').fetchall()
     conn.close()
     return [dict(c) for c in configs]
 
@@ -31,12 +48,13 @@ def create_llm_config(config: LLMConfigCreate):
     try:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO llm_configs (name, provider, model_name, api_key, base_url) VALUES (?, ?, ?, ?, ?)",
-            (config.name, config.provider, config.model_name, config.api_key, config.base_url)
+            "INSERT INTO llm_configs (name, provider_id, model_name, api_key) VALUES (?, ?, ?, ?)",
+            (config.name, config.provider_id, config.model_name, config.api_key)
         )
         conn.commit()
         config_id = cursor.lastrowid
-        return {**config.dict(), "id": config_id}
+        p_name = conn.execute("SELECT name FROM llm_providers WHERE id=?", (config.provider_id,)).fetchone()["name"]
+        return {**config.dict(), "id": config_id, "provider_name": p_name}
     finally:
         conn.close()
 
@@ -46,13 +64,14 @@ def update_llm_config(config_id: int, config: LLMConfigCreate):
     try:
         cursor = conn.cursor()
         cursor.execute(
-            "UPDATE llm_configs SET name = ?, provider = ?, model_name = ?, api_key = ?, base_url = ? WHERE id = ?",
-            (config.name, config.provider, config.model_name, config.api_key, config.base_url, config_id)
+            "UPDATE llm_configs SET name = ?, provider_id = ?, model_name = ?, api_key = ? WHERE id = ?",
+            (config.name, config.provider_id, config.model_name, config.api_key, config_id)
         )
         if cursor.rowcount == 0:
             raise HTTPException(status_code=404, detail="LLM config not found")
         conn.commit()
-        return {**config.dict(), "id": config_id}
+        p_name = conn.execute("SELECT name FROM llm_providers WHERE id=?", (config.provider_id,)).fetchone()["name"]
+        return {**config.dict(), "id": config_id, "provider_name": p_name}
     finally:
         conn.close()
 
@@ -104,6 +123,17 @@ def get_agent_llms():
     """).fetchall()
     conn.close()
     return {row["agent_name"]: row["llm_id"] for row in rows}
+
+class AgentResponse(BaseModel):
+    id: int
+    name: str
+
+@router.get("/agents", response_model=List[AgentResponse])
+def get_agents():
+    conn = get_db_connection()
+    rows = conn.execute("SELECT id, name FROM agents").fetchall()
+    conn.close()
+    return [{"id": r["id"], "name": r["name"]} for r in rows]
 
 # --- Service Integrations API ---
 class ServiceIntegration(BaseModel):

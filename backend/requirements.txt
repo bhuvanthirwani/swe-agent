@@ -4,3 +4,8 @@ pydantic
 sqlalchemy
 python-dotenv
 httpx
+croniter
+mistralai
+openai
+anthropic
+groq

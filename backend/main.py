@@ -9,9 +9,16 @@ from backend.api.dashboard import router as dashboard_router
 from backend.api.config import router as config_router
 from backend.api.workflows import router as workflows_router
 from backend.api.webhooks import router as webhooks_router
+from backend.api.connectors import router as connectors_router
+from backend.api.rbac import router as rbac_router
+from backend.api.skills import router as skills_router
+from backend.api.rag import router as rag_router
 import sqlite3
 import asyncio
 import json
+import os
+from datetime import datetime
+from croniter import croniter
 
 app = FastAPI(title="Agentic Workflow API", description="Python Backend for Universal Agents")
 
@@ -21,22 +28,72 @@ app.include_router(dashboard_router, prefix="/api", tags=["Dashboard"])
 app.include_router(config_router, prefix="/api", tags=["Config"])
 app.include_router(workflows_router, prefix="/api", tags=["Workflows"])
 app.include_router(webhooks_router, prefix="/api/webhooks", tags=["Generic Webhooks"])
+app.include_router(connectors_router, prefix="/api/connectors", tags=["Connectors"])
+app.include_router(rbac_router, prefix="/api/rbac", tags=["RBAC"])
+app.include_router(skills_router, prefix="/api/skills", tags=["Skills"])
+app.include_router(rag_router, prefix="/api/rag", tags=["RAG"])
 
-async def suggestion_agent_task():
+async def cron_scheduler_task():
+    """Background loop to trigger workflows that have a cron schedule."""
+    from backend.core.database import get_db_connection
     while True:
         try:
-            print("Running suggestion agent background task...")
-            # Trigger the orchestrator or agent for suggestions
-            # Example: 
-            # runtime = UniversalAgentRuntime(agent_id="suggestion-agent")
-            # await runtime.execute(AgentInput(agent_id="suggestion-agent", input_data={}))
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT id, name, cron_schedule FROM workflows WHERE cron_schedule IS NOT NULL AND cron_schedule != ''")
+            workflows = cursor.fetchall()
+            
+            now = datetime.utcnow()
+            
+            # Ensure we have a default project
+            cursor.execute("SELECT id FROM projects LIMIT 1")
+            proj_row = cursor.fetchone()
+            project_id = proj_row['id'] if proj_row else 1
+            
+            for wf in workflows:
+                wf_id = wf['id']
+                cron_str = wf['cron_schedule']
+                
+                # Find last run time for this workflow
+                cursor.execute("SELECT MAX(started_at) as last_run FROM tasks WHERE workflow_id = ?", (wf_id,))
+                run_row = cursor.fetchone()
+                
+                # If never run, run immediately? Or wait for next cron? 
+                # Let's say if never run, we use workflow creation time or just default to now.
+                # Actually, better to check if `croniter` next execution is past due since last run.
+                try:
+                    last_run_time = datetime.fromisoformat(run_row['last_run'].replace('Z', '')) if (run_row and run_row['last_run']) else now
+                    cron = croniter(cron_str, last_run_time)
+                    next_run = cron.get_next(datetime)
+                    
+                    if next_run <= now:
+                        print(f"Triggering scheduled workflow: {wf['name']} ({wf_id})")
+                        # Insert a new task
+                        cursor.execute(
+                            "INSERT INTO tasks (project_id, title, status, workflow_id) VALUES (?, ?, ?, ?)",
+                            (project_id, f"Scheduled Run: {wf['name']}", 'in_progress', wf_id)
+                        )
+                        task_id = cursor.lastrowid
+                        conn.commit()
+                        
+                        # Trigger execution asynchronously so it doesn't block scheduler
+                        orchestrator = PipelineOrchestrator(task_id) # Legacy support check? No, use DAGOrchestrator
+                        from backend.core.orchestrator import DAGOrchestrator
+                        dag_orch = DAGOrchestrator(task_id, wf_id)
+                        asyncio.create_task(dag_orch.execute({"trigger_source": "cron"}))
+                        
+                except Exception as ce:
+                    print(f"Cron eval error for wf {wf_id}: {ce}")
+                    
+            conn.close()
         except Exception as e:
-            print(f"Suggestion agent error: {e}")
-        await asyncio.sleep(300)
+            print(f"Workflow scheduler error: {e}")
+        await asyncio.sleep(60)
 
 @app.on_event("startup")
 async def startup_event():
-    asyncio.create_task(suggestion_agent_task())
+    asyncio.create_task(cron_scheduler_task())
 
 @app.post("/api/agents/run", response_model=AgentOutput)
 async def run_agent(input_data: AgentInput):
@@ -57,22 +114,18 @@ async def run_agent(input_data: AgentInput):
 
 @app.post("/api/orchestrate")
 async def execute_workflow(req: OrchestrationRequest):
-    # StreamingResponse pushing Server-Sent Events to the frontend UI
-    async def event_generator():
-        # Mock initial SSE events mapping to existing Next.js logic
-        yield f"data: {json.dumps({'type': 'stage_start', 'stage': 'requirements'})}\n\n"
-        await asyncio.sleep(0.5)
-        yield f"data: {json.dumps({'type': 'stage_complete', 'stage': 'requirements', 'output': 'Requirements verified from ' + req.requirement})}\n\n"
-        
-        yield f"data: {json.dumps({'type': 'stage_start', 'stage': 'code'})}\n\n"
-        for word in ["def ", "hello", "()", ":\n", "    print", "('world')"]:
-            yield f"data: {json.dumps({'type': 'stage_token', 'stage': 'code', 'token': word})}\n\n"
-            await asyncio.sleep(0.1)
-        yield f"data: {json.dumps({'type': 'stage_complete', 'stage': 'code', 'output': 'Code written'})}\n\n"
-        
-        yield f"data: {json.dumps({'type': 'pipeline_complete'})}\n\n"
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    if req.workflow_id and req.workflow_id != 'standard-pipeline':
+        from backend.core.pipeline import execute_dag_pipeline
+        return StreamingResponse(
+            execute_dag_pipeline(req.requirement, req.workflow_id, req.hitl_enabled),
+            media_type="text/event-stream"
+        )
+    else:
+        from backend.core.pipeline import execute_linear_pipeline
+        return StreamingResponse(
+            execute_linear_pipeline(req.requirement, req.hitl_enabled),
+            media_type="text/event-stream"
+        )
 
 @app.post("/api/workspace")
 async def save_workspace():

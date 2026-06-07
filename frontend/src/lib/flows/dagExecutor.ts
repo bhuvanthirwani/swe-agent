@@ -44,6 +44,7 @@ export interface DAGEdge {
   from: string;
   to: string;
   label?: string;
+  description?: string;
   condition?: string; // e.g., 'approved', 'rejected'
 }
 
@@ -52,6 +53,7 @@ export interface DAGWorkflow {
   name: string;
   description: string;
   version: string;
+  cron_schedule?: string;
   nodes: DAGNode[];
   edges: DAGEdge[];
   entryNodeId: string;

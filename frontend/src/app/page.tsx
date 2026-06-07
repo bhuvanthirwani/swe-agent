@@ -3,12 +3,12 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import {
   AgentName, AgentStatus, AgentResult, PipelineEvent,
-  PipelineHistoryEntry, RouteDecision, HITLDecision
+  PipelineHistoryEntry, RouteDecision, HITLDecision, fetchAgentConfigs
 } from '@/lib/types';
 import { parseGeneratedFiles, ParsedFile } from '@/lib/fileParser';
 import { saveToHistory } from '@/lib/history';
 import { loadMemory, updateMemory, extractPreferencesFromAnalystOutput } from '@/lib/memory';
-import { Role, canManageSettings, canManageWorkflows, canRunPipeline } from '@/lib/rbac';
+import { Role, canManageSettings, canManageWorkflows, canRunPipeline, fetchRBACRoles } from '@/lib/rbac';
 import { computeROI, saveROIEntry, ROIMetrics } from '@/lib/roi';
 import { TechnicalDebtReport } from '@/lib/agents/debtScanner';
 import { ComplianceReport } from '@/lib/agents/complianceAgent';
@@ -130,6 +130,8 @@ export default function Home() {
   // GitHub push state (Gap #5)
   const [isPushingToGitHub, setIsPushingToGitHub] = useState(false);
   const [githubRepoUrl, setGithubRepoUrl] = useState<string | null>(null);
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [activeWorkflowConfig, setActiveWorkflowConfig] = useState<any>(null);
 
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -139,6 +141,9 @@ export default function Home() {
     if (storedRole === 'admin' || storedRole === 'member' || storedRole === 'viewer') {
       setCurrentRole(storedRole);
     }
+    Promise.all([fetchRBACRoles(), fetchAgentConfigs()]).then(() => {
+      setIsLoaded(true);
+    });
   }, []);
 
   // Clear retry info after a delay
@@ -283,6 +288,15 @@ export default function Home() {
     let requirementsOutputForMemory = '';
 
     try {
+      const effectiveWorkflowId = workflowId || 'standard-pipeline';
+      const wfRes = await fetch(`/api/workflows/${effectiveWorkflowId}`);
+      if (wfRes.ok) {
+        const wfData = await wfRes.json();
+        setActiveWorkflowConfig(wfData);
+      } else {
+        console.warn('Failed to fetch workflow configuration');
+      }
+
       const response = await fetch('/api/orchestrate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1186,6 +1200,7 @@ export default function Home() {
               maxIterations={maxIterations}
               isRunning={isRunning}
               parallelGroup={parallelGroup}
+              activeWorkflowConfig={activeWorkflowConfig}
             />
           )}
 

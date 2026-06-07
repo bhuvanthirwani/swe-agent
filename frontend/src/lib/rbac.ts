@@ -42,42 +42,31 @@ export interface Permission {
   description: string;
 }
 
-export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
-  admin: [
-    { action: 'create', resource: 'pipeline', description: 'Create and run pipelines' },
-    { action: 'read', resource: 'pipeline', description: 'View pipeline results' },
-    { action: 'delete', resource: 'pipeline', description: 'Delete pipeline history' },
-    { action: 'manage', resource: 'team', description: 'Manage team members' },
-    { action: 'manage', resource: 'settings', description: 'Configure system settings' },
-    { action: 'manage', resource: 'connectors', description: 'Configure integrations' },
-    { action: 'export', resource: 'audit', description: 'Export audit logs' },
-    { action: 'run', resource: 'code', description: 'Execute code in sandbox' },
-    { action: 'approve', resource: 'hitl', description: 'Approve/reject HITL requests' },
-    { action: 'manage', resource: 'workflows', description: 'Create/edit DAG workflows' },
-    { action: 'manage', resource: 'providers', description: 'Configure LLM providers' },
-    { action: 'manage', resource: 'sessions', description: 'Manage all sessions' },
-  ],
-  member: [
-    { action: 'create', resource: 'pipeline', description: 'Create and run pipelines' },
-    { action: 'read', resource: 'pipeline', description: 'View pipeline results' },
-    { action: 'export', resource: 'audit', description: 'Export own audit logs' },
-    { action: 'run', resource: 'code', description: 'Execute code in sandbox' },
-    { action: 'approve', resource: 'hitl', description: 'Approve/reject HITL requests' },
-    { action: 'read', resource: 'workflows', description: 'View DAG workflows' },
-    { action: 'manage', resource: 'sessions', description: 'Manage own sessions' },
-  ],
-  viewer: [
-    { action: 'read', resource: 'pipeline', description: 'View pipeline results' },
-    { action: 'read', resource: 'workflows', description: 'View DAG workflows' },
-    { action: 'read', resource: 'sessions', description: 'View sessions' },
-  ],
-};
+// Internal cache for fetched roles
+let rolesCache: Record<string, string[]> = {};
+
+export async function fetchRBACRoles(): Promise<void> {
+  try {
+    const res = await fetch('/api/rbac/roles');
+    if (res.ok) {
+      const data = await res.json();
+      const newCache: Record<string, string[]> = {};
+      for (const role of data.roles || []) {
+        newCache[role.id] = role.permissions;
+      }
+      rolesCache = newCache;
+    }
+  } catch (err) {
+    console.error('Failed to fetch RBAC roles', err);
+  }
+}
 
 // ─── Permission Checking ─────────────────────────────────────
 
 export function hasPermission(role: Role, action: string, resource: string): boolean {
-  const permissions = ROLE_PERMISSIONS[role] || [];
-  return permissions.some(p => p.action === action && p.resource === resource);
+  const permissions = rolesCache[role] || [];
+  // For simplicity, we assume permissions are stored as strings "action:resource" or "*" in the backend
+  return permissions.includes('*') || permissions.includes(`${action}:${resource}`);
 }
 
 export function canRunPipeline(role: Role): boolean {

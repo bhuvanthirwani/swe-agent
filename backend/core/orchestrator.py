@@ -49,28 +49,64 @@ class DAGOrchestrator:
             runs = cursor.fetchall()
             
             completed_nodes = {}
+            resolved_runs = {}
             for r in runs:
-                if r['node_id'] and r['status'] == 'success':
-                    completed_nodes[r['node_id']] = r['output_result']
-                elif r['node_id'] and r['status'] == 'waiting':
-                    # If we are waiting, we stop execution here.
-                    print(f"Orchestrator halted: Node {r['node_id']} is waiting for human/external input.")
-                    return
+                if r['node_id']:
+                    resolved_runs[r['node_id']] = r
+                    if r['status'] == 'success':
+                        completed_nodes[r['node_id']] = r['output_result']
+                    elif r['status'] == 'waiting':
+                        print(f"Orchestrator halted: Node {r['node_id']} is waiting for human/external input.")
+                        return
+
+            def get_edge_status(edge):
+                u = edge['from']
+                if u not in resolved_runs:
+                    return 'pending'
+                r = resolved_runs[u]
+                if r['status'] in ('skipped', 'failed'):
+                    return 'dead'
+                if r['status'] == 'success':
+                    u_node = next((n for n in nodes if n['id'] == u), None)
+                    if u_node and u_node['type'] == 'condition':
+                        try:
+                            out = json.loads(r['output_result'] or '{}')
+                            branch = str(out.get('branch_taken', '')).strip().lower()
+                            edge_val = str(edge.get('label') or edge.get('condition') or '').strip().lower()
+                            return 'traversable' if edge_val == branch else 'dead'
+                        except Exception:
+                            return 'dead'
+                    return 'traversable'
+                return 'pending'
+
+            next_nodes = []
+            changed = True
+            while changed:
+                changed = False
+                for n in nodes:
+                    nid = n['id']
+                    if nid in resolved_runs:
+                        continue
+                    inc_edges = [e for e in edges if e['to'] == nid]
+                    if not inc_edges:
+                        if nid not in next_nodes:
+                            next_nodes.append(nid)
+                    else:
+                        statuses = [get_edge_status(e) for e in inc_edges]
+                        if all(s != 'pending' for s in statuses):
+                            if all(s == 'dead' for s in statuses):
+                                # Mark as skipped
+                                cursor.execute(
+                                    "INSERT INTO agent_runs (task_id, agent_id, step_order, status, node_id) VALUES (?, ?, ?, ?, ?)",
+                                    (self.task_id, 0, 0, 'skipped', nid)
+                                )
+                                conn.commit()
+                                resolved_runs[nid] = {'status': 'skipped', 'node_id': nid, 'output_result': None}
+                                changed = True
+                            else:
+                                if nid not in next_nodes:
+                                    next_nodes.append(nid)
             
-            # Topological sort or simple BFS based on completed nodes
-            # For simplicity, if no nodes run, we start with entry node or nodes with no incoming edges
-            if not completed_nodes:
-                next_nodes = [n['id'] for n in nodes if not any(e['to'] == n['id'] for e in edges)]
-            else:
-                next_nodes = []
-                for edge in edges:
-                    if edge['from'] in completed_nodes and edge['to'] not in completed_nodes:
-                        # Check if all predecessors of edge['to'] are completed
-                        preds = [e['from'] for e in edges if e['to'] == edge['to']]
-                        if all(p in completed_nodes for p in preds):
-                            if edge['to'] not in next_nodes:
-                                next_nodes.append(edge['to'])
-                                
             if not next_nodes:
                 # Finished
                 cursor.execute("UPDATE tasks SET status = 'completed' WHERE id = ?", (self.task_id,))
@@ -86,10 +122,12 @@ class DAGOrchestrator:
                     
                 print(f"Executing node: {node_id} ({node_config['type']})")
                 
-                # Context merging from predecessors
-                preds = [e['from'] for e in edges if e['to'] == node_id]
+                # Context merging ONLY from traversable predecessors
+                inc_edges = [e for e in edges if e['to'] == node_id]
+                traversable_preds = [e['from'] for e in inc_edges if get_edge_status(e) == 'traversable']
+                
                 merged_context = initial_context or {}
-                for p in preds:
+                for p in traversable_preds:
                     if p in completed_nodes and completed_nodes[p]:
                         try:
                             parsed = json.loads(completed_nodes[p])
@@ -179,8 +217,33 @@ class DAGOrchestrator:
                     print(f"Workflow paused at node {node_id}")
                     return # Stop traversal
                     
+                elif node_config['type'] == 'condition':
+                    cond = node_config.get('condition', {})
+                    field = cond.get('field', '')
+                    op = cond.get('operator', '==')
+                    val = cond.get('value', '')
+                    actual_val = merged_context.get(field)
+                    
+                    branch_taken = 'false'
+                    try:
+                        if op == '==' and str(actual_val) == str(val): branch_taken = 'true'
+                        elif op == '!=' and str(actual_val) != str(val): branch_taken = 'true'
+                        elif op == '>' and float(actual_val) > float(val): branch_taken = 'true'
+                        elif op == '<' and float(actual_val) < float(val): branch_taken = 'true'
+                        elif op == 'contains' and str(val) in str(actual_val): branch_taken = 'true'
+                    except Exception as e:
+                        print(f"Condition evaluation error: {e}")
+                        branch_taken = 'false'
+                        
+                    output_res = json.dumps({"branch_taken": branch_taken})
+                    cursor.execute(
+                        "INSERT INTO agent_runs (task_id, agent_id, step_order, status, input_context, node_id, output_result) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (self.task_id, 0, 0, 'success', json.dumps(merged_context), node_id, output_res)
+                    )
+                    conn.commit()
+                    
                 else:
-                    # Condition, Parallel, Merge nodes just pass through context for now
+                    # Parallel, Merge, Trigger nodes just pass through context
                     cursor.execute(
                         "INSERT INTO agent_runs (task_id, agent_id, step_order, status, input_context, node_id, output_result) VALUES (?, ?, ?, ?, ?, ?, ?)",
                         (self.task_id, 0, 0, 'success', json.dumps(merged_context), node_id, json.dumps(merged_context))

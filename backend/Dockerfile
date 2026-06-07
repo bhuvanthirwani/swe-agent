@@ -22,5 +22,5 @@ COPY . ./backend
 # Expose FastAPI port
 EXPOSE 8000
 
-# Start FastAPI server via uvicorn
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Start FastAPI server via uvicorn with hot reload
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

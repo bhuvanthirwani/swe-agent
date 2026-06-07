@@ -4,17 +4,7 @@
 
 export type AgentStatus = 'idle' | 'running' | 'complete' | 'error' | 'skipped' | 'waiting_hitl';
 
-export type AgentName =
-  | 'requirements-analyst'
-  | 'task-planner'
-  | 'developer'
-  | 'code-reviewer'
-  | 'security-reviewer'
-  | 'testing-agent'
-  | 'deployment-agent'
-  | 'product-manager'
-  | 'ux-designer'
-  | 'router-agent';
+export type AgentName = string;
 
 export interface AgentResult {
   agentName: AgentName;
@@ -339,95 +329,27 @@ export interface PipelineAnalytics {
   estimatedCostUsd: number;
 }
 
-export const AGENT_CONFIGS: Record<AgentName, AgentConfig> = {
-  'router-agent': {
-    name: 'router-agent',
-    displayName: 'Router / Classifier',
-    description: 'Classifies user intent and routes to the optimal pipeline subset',
-    model: 'llama-3.1-8b-instant',
-    icon: '🧭',
-    color: '#f43f5e',
-    maxTokens: 512,
-  },
-  'requirements-analyst': {
-    name: 'requirements-analyst',
-    displayName: 'Requirements Analyst',
-    description: 'Parses raw user input into structured specifications',
-    model: 'llama-3.1-8b-instant',
-    icon: '🔍',
-    color: '#6366f1',
-    maxTokens: 2048,
-  },
-  'task-planner': {
-    name: 'task-planner',
-    displayName: 'Task Planner',
-    description: 'Breaks requirements into granular development tasks',
-    model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-    icon: '📋',
-    color: '#8b5cf6',
-    maxTokens: 2048,
-  },
-  'developer': {
-    name: 'developer',
-    displayName: 'Developer Agent',
-    description: 'Writes production-ready code for all tasks',
-    model: 'qwen/qwen3-32b',
-    icon: '💻',
-    color: '#06b6d4',
-    maxTokens: 4096,
-  },
-  'code-reviewer': {
-    name: 'code-reviewer',
-    displayName: 'Code Reviewer',
-    description: 'Reviews code for quality, security, and correctness',
-    model: 'llama-3.3-70b-versatile',
-    icon: '🔎',
-    color: '#f59e0b',
-    maxTokens: 2048,
-  },
-  'security-reviewer': {
-    name: 'security-reviewer',
-    displayName: 'Security Reviewer',
-    description: 'Scans generated code for OWASP Top 10 vulnerabilities',
-    model: 'llama-3.3-70b-versatile',
-    icon: '🛡️',
-    color: '#ef4444',
-    maxTokens: 3072,
-  },
-  'testing-agent': {
-    name: 'testing-agent',
-    displayName: 'Testing Agent',
-    description: 'Auto-generates unit & integration tests for the code',
-    model: 'llama-3.3-70b-versatile',
-    icon: '🧪',
-    color: '#ec4899',
-    maxTokens: 3072,
-  },
-  'deployment-agent': {
-    name: 'deployment-agent',
-    displayName: 'Deployment Agent',
-    description: 'Generates deployment configs and instructions',
-    model: 'llama-3.1-8b-instant',
-    icon: '🚀',
-    color: '#10b981',
-    maxTokens: 2048,
-  },
-  'product-manager': {
-    name: 'product-manager',
-    displayName: 'Product Manager',
-    description: 'Generates user stories, PRDs, and prioritizations',
-    model: 'llama-3.3-70b-versatile',
-    icon: '📊',
-    color: '#f59e0b',
-    maxTokens: 2048,
-  },
-  'ux-designer': {
-    name: 'ux-designer',
-    displayName: 'UX/UI Designer',
-    description: 'Creates comprehensive design systems and wireframes',
-    model: 'llama-3.3-70b-versatile',
-    icon: '🎨',
-    color: '#ec4899',
-    maxTokens: 2048,
-  },
-};
+export let AGENT_CONFIGS: Record<string, AgentConfig> = {};
+
+export async function fetchAgentConfigs() {
+  try {
+    const res = await fetch('/api/agents');
+    if (!res.ok) return;
+    const data = await res.json();
+    const newConfigs: Record<string, AgentConfig> = {};
+    for (const a of data) {
+      newConfigs[a.name] = {
+        name: a.name,
+        displayName: a.display_name || a.name,
+        description: a.description || '',
+        model: a.type,
+        icon: a.icon || '⚙️',
+        color: a.color || '#6366f1',
+        maxTokens: a.max_tokens || 2048,
+      };
+    }
+    AGENT_CONFIGS = newConfigs;
+  } catch (err) {
+    console.error('Failed to fetch agent configs', err);
+  }
+}

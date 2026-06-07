@@ -10,7 +10,7 @@ def get_db_connection():
     db_dir = os.path.dirname(DATABASE_PATH)
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
-    conn = sqlite3.connect(DATABASE_PATH)
+    conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     # Enable foreign key constraints
     conn.execute("PRAGMA foreign_keys = ON")

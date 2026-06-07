@@ -154,3 +154,37 @@ def delete_agent(agent_id: int):
     conn.commit()
     conn.close()
     return {"message": "Agent deleted"}
+
+class VoiceGenerateRequest(BaseModel):
+    transcript: str
+
+@router.post("/agents/generate-from-voice")
+def generate_from_voice(req: VoiceGenerateRequest):
+    # Mock LLM extraction using voice-agent-creator
+    transcript = req.transcript.lower()
+    
+    name = "custom-agent"
+    agent_type = "generator"
+    
+    if "reviewer" in transcript or "test" in transcript:
+        agent_type = "reviewer"
+    elif "planner" in transcript or "plan" in transcript:
+        agent_type = "planner"
+        
+    words = transcript.replace(".", "").replace(",", "").split()
+    if "name" in words:
+        name_idx = words.index("name")
+        if name_idx + 1 < len(words):
+            name_val = words[name_idx + 1]
+            if name_val == "it" and name_idx + 2 < len(words):
+                name_val = words[name_idx + 2]
+            name = name_val.replace(" ", "-")
+
+    return {
+        "name": name,
+        "type": agent_type,
+        "description": "Agent generated from voice requirements.",
+        "system_prompt": f"You are an AI agent designed to address the following requirement: '{req.transcript}'. Act accordingly.",
+        "input_schema": "{}",
+        "output_schema": "{}"
+    }

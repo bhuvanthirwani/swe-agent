@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import { AgentName, AgentStatus, AgentResult, AGENT_CONFIGS } from '@/lib/types';
 import AgentCard from './AgentCard';
 
@@ -12,6 +13,7 @@ interface PipelineViewProps {
     maxIterations: number;
     isRunning: boolean;
     parallelGroup?: string[] | null;
+    activeWorkflowConfig?: any;
 }
 
 // Router runs first, then the standard pipeline agents (now includes security-reviewer)
@@ -39,10 +41,81 @@ export default function PipelineView({
     maxIterations,
     isRunning,
     parallelGroup,
+    activeWorkflowConfig,
 }: PipelineViewProps) {
+    // Dynamic Pipeline computation
+    const { dynamicOrder, dynamicParallel } = useMemo(() => {
+        if (!activeWorkflowConfig || !activeWorkflowConfig.nodes) {
+            return { dynamicOrder: PIPELINE_ORDER, dynamicParallel: PARALLEL_AGENTS };
+        }
+        
+        const nodes = activeWorkflowConfig.nodes || [];
+        const edges = activeWorkflowConfig.edges || [];
+        
+        const inDegree: Record<string, number> = {};
+        const adjList: Record<string, string[]> = {};
+        const nodeMap: Record<string, any> = {};
+        
+        nodes.forEach((n: any) => {
+            inDegree[n.id] = 0;
+            adjList[n.id] = [];
+            nodeMap[n.id] = n;
+        });
+        
+        edges.forEach((e: any) => {
+            if (adjList[e.from] && inDegree[e.to] !== undefined) {
+                adjList[e.from].push(e.to);
+                inDegree[e.to]++;
+            }
+        });
+        
+        const queue: string[] = [];
+        Object.keys(inDegree).forEach(id => {
+            if (inDegree[id] === 0) queue.push(id);
+        });
+        
+        const sortedAgents: string[] = [];
+        const parallelAgents = new Set<string>();
+        
+        while (queue.length > 0) {
+            // Group nodes that can be processed in parallel
+            const level = [...queue];
+            queue.length = 0;
+            
+            const agentLevel: string[] = [];
+            level.forEach(id => {
+                const node = nodeMap[id];
+                if (node.type === 'agent' && node.agentName) {
+                    agentLevel.push(node.agentName);
+                }
+                
+                adjList[id].forEach(neighbor => {
+                    inDegree[neighbor]--;
+                    if (inDegree[neighbor] === 0) {
+                        queue.push(neighbor);
+                    }
+                });
+            });
+            
+            if (agentLevel.length > 1) {
+                agentLevel.forEach(a => parallelAgents.add(a));
+            }
+            sortedAgents.push(...agentLevel);
+        }
+        
+        // Remove duplicates just in case
+        const uniqueAgents = Array.from(new Set(sortedAgents));
+        
+        return { dynamicOrder: uniqueAgents, dynamicParallel: parallelAgents };
+    }, [activeWorkflowConfig]);
+
+    const displayOrder = activeWorkflowConfig ? dynamicOrder : PIPELINE_ORDER;
+    const currentRouterAgent = displayOrder.length > 0 ? displayOrder[0] : ROUTER_AGENT;
+    const remainingOrder = activeWorkflowConfig ? displayOrder.slice(1) : PIPELINE_ORDER;
+
     const getConnectorStatus = (index: number): string => {
-        const currentAgent = PIPELINE_ORDER[index];
-        const nextAgent = PIPELINE_ORDER[index + 1];
+        const currentAgent = remainingOrder[index];
+        const nextAgent = remainingOrder[index + 1];
 
         if (agentStatuses[currentAgent] === 'complete') {
             if (agentStatuses[nextAgent] === 'running') return 'active';
@@ -61,8 +134,8 @@ export default function PipelineView({
 
     const isWaitingHITL = agentStatuses['developer'] === 'waiting_hitl';
 
-    const routerStatus = agentStatuses[ROUTER_AGENT] ?? 'idle';
-    const routerResult = agentResults[ROUTER_AGENT] ?? null;
+    const routerStatus = agentStatuses[currentRouterAgent] ?? 'idle';
+    const routerResult = agentResults[currentRouterAgent] ?? null;
 
     return (
         <div className="pipeline-section">
@@ -117,24 +190,24 @@ export default function PipelineView({
                 </div>
             )}
 
-            {/* Router Agent — shown at top of pipeline */}
+            {/* First Agent — shown at top of pipeline */}
             {(routerStatus !== 'idle') && (
                 <div>
                     <AgentCard
-                        agentName={ROUTER_AGENT}
+                        agentName={currentRouterAgent}
                         status={routerStatus}
                         result={routerResult}
-                        isSelected={selectedAgent === ROUTER_AGENT}
-                        onClick={() => onSelectAgent(ROUTER_AGENT)}
+                        isSelected={selectedAgent === currentRouterAgent}
+                        onClick={() => onSelectAgent(currentRouterAgent)}
                     />
                     <div className={`pipeline-connector ${routerStatus === 'complete' ? 'complete' : ''}`} />
                 </div>
             )}
 
-            {PIPELINE_ORDER.map((agentName, index) => {
+            {remainingOrder.map((agentName, index) => {
                 const status = agentStatuses[agentName];
                 const isSkipped = status === 'skipped';
-                const isParallel = parallelGroup?.includes(agentName) || (PARALLEL_AGENTS.has(agentName) && status === 'running');
+                const isParallel = parallelGroup?.includes(agentName) || (dynamicParallel.has(agentName) && status === 'running');
 
                 return (
                     <div key={agentName} style={isSkipped ? { opacity: 0.35, filter: 'grayscale(0.7)' } : undefined}>
@@ -184,10 +257,10 @@ export default function PipelineView({
                         )}
 
                         {/* Connector line between agents */}
-                        {index < PIPELINE_ORDER.length - 1 && (
+                        {index < remainingOrder.length - 1 && (
                             <>
                                 {/* Dev ↔ Reviewer loop indicator */}
-                                {index === 2 && isInLoop && (
+                                {remainingOrder[index] === 'developer' && remainingOrder[index + 1] === 'code-reviewer' && isInLoop && (
                                     <div className="loop-indicator">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                             <polyline points="23 4 23 10 17 10" />
