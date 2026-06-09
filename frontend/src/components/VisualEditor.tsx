@@ -1,19 +1,372 @@
-import React, { useMemo, useRef, useState, useEffect } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  DAGNodeType,
-  DAGWorkflow,
-  DAGNode,
   DAGEdge,
+  DAGEdgeType,
+  DAGNode,
+  DAGNodeType,
+  DAGPort,
+  DAGPortKind,
+  DAGPortPosition,
+  DAGWorkflow,
 } from "@/lib/flows/dagExecutor";
 import { AGENT_CONFIGS, AgentName } from "@/lib/types";
-import { fetchConnectors, Connector } from "@/lib/connectors";
+import { Connector, fetchConnectors } from "@/lib/connectors";
 
 interface VisualEditorProps {
   onRunWorkflow: (workflowId: string) => void;
 }
 
+interface Point {
+  x: number;
+  y: number;
+}
+
+interface ConnectionDraft {
+  sourceNodeId: string;
+  sourceHandleId: string;
+  sourceKind: DAGPortKind;
+  start: Point;
+  current: Point;
+}
+
 const NODE_WIDTH = 230;
-const NODE_HEIGHT = 96;
+const NODE_HEIGHT = 108;
+const HANDLE_SIZE = 12;
+const RESOURCE_BOX_SIZE = 22;
+
+const CORE_NODE_TYPES: DAGNodeType[] = [
+  "trigger",
+  "agent",
+  "condition",
+  "parallel",
+  "action",
+  "human_checkpoint",
+  "merge",
+];
+
+const COMPONENT_NODE_TYPES: DAGNodeType[] = [
+  "model",
+  "tool",
+  "rag",
+  "vector_store",
+  "buffer_memory",
+  "summary_memory",
+  "hippocampus_memory",
+  "guardrail",
+];
+
+const TOOL_OPTIONS = ["searchWeb", "readFile", "lintCode", "run_code"];
+const MODEL_OPTIONS = ["llama-3.3-70b", "qwen/qwen3-32b", "llama-3.1-8b-instant"];
+const MEMORY_OPTIONS = ["Buffer Memory", "Summary Memory", "Hippocampus Memory"];
+const RAG_OPTIONS = ["Chroma DB", "Workflow Knowledge Base", "Project Docs"];
+const GUARDRAIL_OPTIONS = ["PII/Secrets", "Prompt Injection", "Schema Validation", "Security Review"];
+
+function labelForType(type: DAGNodeType): string {
+  const labels: Record<DAGNodeType, string> = {
+    trigger: "Trigger",
+    agent: "Agent",
+    condition: "Condition",
+    parallel: "Parallel",
+    action: "Action",
+    human_checkpoint: "Human Checkpoint",
+    merge: "Merge",
+    model: "Chat Model",
+    tool: "Tool",
+    rag: "RAG (Chroma DB)",
+    vector_store: "Vector Store",
+    buffer_memory: "Buffer Memory",
+    summary_memory: "Summary Memory",
+    hippocampus_memory: "Hippocampus Memory",
+    guardrail: "Guardrail",
+  };
+  return labels[type];
+}
+
+function getNodeColor(type: DAGNodeType, agentName?: AgentName): string {
+  if (type === "agent" && agentName) return AGENT_CONFIGS[agentName]?.color ?? "#6366f1";
+  const colors: Record<DAGNodeType, string> = {
+    trigger: "#84cc16",
+    agent: "#6366f1",
+    condition: "#f59e0b",
+    parallel: "#06b6d4",
+    action: "#d946ef",
+    human_checkpoint: "#ec4899",
+    merge: "#10b981",
+    model: "#818cf8",
+    tool: "#10b981",
+    rag: "#38bdf8",
+    vector_store: "#22d3ee",
+    buffer_memory: "#f59e0b",
+    summary_memory: "#fb923c",
+    hippocampus_memory: "#a78bfa",
+    guardrail: "#f43f5e",
+  };
+  return colors[type];
+}
+
+function getNodeIcon(type: DAGNodeType, agentName?: AgentName): string {
+  if (type === "agent" && agentName) return AGENT_CONFIGS[agentName]?.icon ?? "🤖";
+  const icons: Record<DAGNodeType, string> = {
+    trigger: "🔌",
+    agent: "🤖",
+    condition: "🔀",
+    parallel: "⚡",
+    action: "🚀",
+    human_checkpoint: "👤",
+    merge: "✅",
+    model: "🧠",
+    tool: "🛠️",
+    rag: "🔎",
+    vector_store: "🧲",
+    buffer_memory: "📝",
+    summary_memory: "📚",
+    hippocampus_memory: "🦛",
+    guardrail: "🛡️",
+  };
+  return icons[type];
+}
+
+function defaultConfigForType(type: DAGNodeType): Record<string, unknown> | undefined {
+  if (type === "rag") {
+    return {
+      provider: "chroma",
+      collectionName: "workflow_knowledge",
+      topK: 5,
+      scoreThreshold: 0.35,
+      queryMode: "combined",
+      allowAgentWrites: true,
+    };
+  }
+  if (type === "vector_store") {
+    return {
+      provider: "chroma",
+      collectionName: "workflow_knowledge",
+      persistDirectory: ".workspace/chroma",
+      ingestAgentOutputs: true,
+    };
+  }
+  if (type === "buffer_memory") {
+    return {
+      scope: "session",
+      filePath: ".workspace/memory/{workflow_id}/{session_id}/buffer.md",
+      maxTokens: 2500,
+      writable: true,
+      clearOnRunStart: true,
+    };
+  }
+  if (type === "summary_memory") {
+    return {
+      scope: "workflow",
+      filePath: ".workspace/memory/{workflow_id}/{session_id}/summary.md",
+      updateOnComplete: true,
+      updateOnFailure: true,
+      maxSummaryTokens: 2000,
+    };
+  }
+  if (type === "hippocampus_memory") {
+    return {
+      scope: "project",
+      filePath: ".workspace/memory/{project_id}/hippocampus.md",
+      importanceThreshold: 0.75,
+      topK: 8,
+      allowWrites: true,
+    };
+  }
+  if (type === "guardrail") {
+    return {
+      phase: "both",
+      policies: ["PII/Secrets", "Prompt Injection"],
+      action: "warn",
+      allowRetry: true,
+    };
+  }
+  if (type === "model") {
+    return {
+      provider: "groq",
+      modelName: "llama-3.3-70b-versatile",
+      temperature: 0.3,
+      maxTokens: 4096,
+    };
+  }
+  if (type === "tool") {
+    return {
+      toolName: "searchWeb",
+      description: "Search the web for additional context.",
+    };
+  }
+  return undefined;
+}
+
+function makePort(
+  id: string,
+  label: string,
+  direction: "input" | "output",
+  kind: DAGPortKind,
+  position: DAGPortPosition,
+  accepts?: DAGPortKind[],
+): DAGPort {
+  return { id, label, direction, kind, position, accepts };
+}
+
+function getDefaultPorts(node: DAGNode): DAGPort[] {
+  switch (node.type) {
+    case "trigger":
+      return [makePort("flow.out", "Flow", "output", "control", "right")];
+    case "agent":
+      return [
+        makePort("flow.in", "Flow", "input", "control", "left", ["control", "error"]),
+        makePort("context.in", "Context", "input", "data", "left", ["data", "context"]),
+        makePort("flow.out", "Flow", "output", "control", "right"),
+        makePort("data.out", "Data", "output", "data", "right"),
+        makePort("error.out", "Error", "output", "error", "right"),
+        makePort("model.in", "Model", "input", "model", "bottom", ["model"]),
+        makePort("tools.in", "Tools", "input", "tool", "bottom", ["tool"]),
+        makePort("memory.in", "Memory", "input", "memory", "bottom", ["memory"]),
+        makePort("rag.in", "RAG", "input", "rag", "bottom", ["rag"]),
+        makePort("guardrails.in", "Guard", "input", "guardrail", "bottom", ["guardrail"]),
+      ];
+    case "condition":
+      return [
+        makePort("flow.in", "In", "input", "control", "left", ["control"]),
+        makePort("true.out", "True", "output", "control", "right"),
+        makePort("false.out", "False", "output", "control", "right"),
+      ];
+    case "parallel":
+      return [
+        makePort("flow.in", "In", "input", "control", "left", ["control"]),
+        makePort("branch.a", "A", "output", "control", "right"),
+        makePort("branch.b", "B", "output", "control", "right"),
+      ];
+    case "merge":
+      return [
+        makePort("flow.in.1", "In 1", "input", "control", "left", ["control"]),
+        makePort("flow.in.2", "In 2", "input", "control", "left", ["control"]),
+        makePort("flow.out", "Out", "output", "control", "right"),
+      ];
+    case "human_checkpoint":
+      return [
+        makePort("flow.in", "In", "input", "control", "left", ["control"]),
+        makePort("approved.out", "Approve", "output", "control", "right"),
+        makePort("rejected.out", "Reject", "output", "control", "right"),
+      ];
+    case "action":
+      return [
+        makePort("flow.in", "In", "input", "control", "left", ["control"]),
+        makePort("payload.in", "Payload", "input", "data", "left", ["data", "context"]),
+        makePort("flow.out", "Out", "output", "control", "right"),
+      ];
+    case "model":
+      return [makePort("model.out", "Model", "output", "model", "right")];
+    case "tool":
+      return [makePort("tool.out", "Tool", "output", "tool", "right")];
+    case "rag":
+      return [
+        makePort("store.in", "Store", "input", "vector", "left", ["vector"]),
+        makePort("rag.out", "RAG", "output", "rag", "right"),
+      ];
+    case "vector_store":
+      return [
+        makePort("documents.in", "Docs", "input", "data", "left", ["data", "context"]),
+        makePort("store.out", "Store", "output", "vector", "right"),
+      ];
+    case "buffer_memory":
+    case "summary_memory":
+    case "hippocampus_memory":
+      return [
+        makePort("update.in", "Update", "input", "data", "left", ["data", "context"]),
+        makePort("memory.out", "Memory", "output", "memory", "right"),
+      ];
+    case "guardrail":
+      return [makePort("guardrail.out", "Guard", "output", "guardrail", "right")];
+    default:
+      return [];
+  }
+}
+
+function getNodePorts(node: DAGNode): DAGPort[] {
+  const defaults = getDefaultPorts(node);
+  const custom = node.ports ?? [];
+  const seen = new Set(defaults.map((port) => port.id));
+  return [...defaults, ...custom.filter((port) => !seen.has(port.id))];
+}
+
+function getPortSide(port: DAGPort): DAGPortPosition {
+  if (port.position) return port.position;
+  return port.direction === "input" ? "left" : "right";
+}
+
+function getPortsOnSide(node: DAGNode, side: DAGPortPosition): DAGPort[] {
+  return getNodePorts(node).filter((port) => getPortSide(port) === side);
+}
+
+function getPortCenter(node: DAGNode, port: DAGPort, zoom: number): Point {
+  const side = getPortSide(port);
+  const sidePorts = getPortsOnSide(node, side);
+  const index = Math.max(0, sidePorts.findIndex((candidate) => candidate.id === port.id));
+  const count = Math.max(1, sidePorts.length);
+
+  if (side === "left") {
+    return {
+      x: node.x * zoom,
+      y: (node.y + ((index + 1) * NODE_HEIGHT) / (count + 1)) * zoom,
+    };
+  }
+  if (side === "right") {
+    return {
+      x: (node.x + NODE_WIDTH) * zoom,
+      y: (node.y + ((index + 1) * NODE_HEIGHT) / (count + 1)) * zoom,
+    };
+  }
+  if (side === "top") {
+    return {
+      x: (node.x + ((index + 1) * NODE_WIDTH) / (count + 1)) * zoom,
+      y: node.y * zoom,
+    };
+  }
+  return {
+    x: (node.x + ((index + 1) * NODE_WIDTH) / (count + 1)) * zoom,
+    y: (node.y + NODE_HEIGHT + 27) * zoom,
+  };
+}
+
+function portsCompatible(source: DAGPort, target: DAGPort): boolean {
+  if (source.direction !== "output" || target.direction !== "input") return false;
+  if (target.accepts?.includes(source.kind)) return true;
+  if (source.kind === target.kind) return true;
+  if (source.kind === "data" && target.kind === "context") return true;
+  if (source.kind === "context" && target.kind === "data") return true;
+  return false;
+}
+
+function inferEdgeType(source: DAGPort, target: DAGPort): DAGEdgeType {
+  if (target.kind === "model" || source.kind === "model") return "model";
+  if (target.kind === "tool" || source.kind === "tool") return "tool";
+  if (target.kind === "memory" || source.kind === "memory") return "memory";
+  if (target.kind === "rag" || source.kind === "rag") return "rag";
+  if (target.kind === "guardrail" || source.kind === "guardrail") return "guardrail";
+  if (source.kind === "vector" || target.kind === "vector") return "vector";
+  if (source.kind === "error" || target.kind === "error") return "error";
+  if (source.kind === "data" || target.kind === "data") return "data";
+  if (source.kind === "context" || target.kind === "context") return "context";
+  return "control";
+}
+
+function pathForEdge(start: Point, end: Point, zoom: number): string {
+  const delta = Math.max(40 * zoom, Math.abs(end.x - start.x) * 0.35);
+  return `M ${start.x} ${start.y} C ${start.x + delta} ${start.y}, ${end.x - delta} ${end.y}, ${end.x} ${end.y}`;
+}
+
+function configString(node: DAGNode, key: string, fallback = ""): string {
+  const value = node.config?.[key];
+  if (value === undefined || value === null) return fallback;
+  return String(value);
+}
+
+function configNumber(node: DAGNode, key: string, fallback: number): number {
+  const value = node.config?.[key];
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
 
 export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
   const [workflows, setWorkflows] = useState<DAGWorkflow[]>([]);
@@ -22,19 +375,14 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [isDragging, setIsDragging] = useState(false);
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
-
-  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [dragOffset, setDragOffset] = useState<Point>({ x: 0, y: 0 });
+  const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
-
-  const [edgeSource, setEdgeSource] = useState<string | null>(null);
+  const [connectionDraft, setConnectionDraft] = useState<ConnectionDraft | null>(null);
+  const [activeMenu, setActiveMenu] = useState<{ nodeId: string; portId: string } | null>(null);
+  const [connectors, setConnectors] = useState<Connector[]>([]);
 
   const canvasRef = useRef<HTMLDivElement>(null);
-  const [connectors, setConnectors] = useState<Connector[]>([]);
-  const [activeMenu, setActiveMenu] = useState<{
-    nodeId: string;
-    handleType: string;
-  } | null>(null);
 
   useEffect(() => {
     fetchConnectors().then(setConnectors).catch(console.error);
@@ -42,21 +390,62 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
       .then((res) => res.json())
       .then((data: DAGWorkflow[]) => {
         setWorkflows(data);
-        if (data.length > 0 && !activeWorkflowId) {
-          setActiveWorkflowId(data[0].id);
-        }
+        if (data.length > 0 && !activeWorkflowId) setActiveWorkflowId(data[0].id);
       })
       .catch(console.error);
   }, [activeWorkflowId]);
 
   const activeWorkflow = useMemo(
-    () => workflows.find((w) => w.id === activeWorkflowId) ?? null,
+    () => workflows.find((workflow) => workflow.id === activeWorkflowId) ?? null,
     [workflows, activeWorkflowId],
   );
-  const selectedNode =
-    activeWorkflow?.nodes.find((n) => n.id === selectedNodeId) ?? null;
-  const selectedEdge =
-    activeWorkflow?.edges.find((e) => e.id === selectedEdgeId) ?? null;
+
+  const selectedNode = activeWorkflow?.nodes.find((node) => node.id === selectedNodeId) ?? null;
+  const selectedEdge = activeWorkflow?.edges.find((edge) => edge.id === selectedEdgeId) ?? null;
+
+  const getCanvasPoint = (event: React.MouseEvent): Point => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return { x: 0, y: 0 };
+    return {
+      x: event.clientX - rect.left - pan.x,
+      y: event.clientY - rect.top - pan.y,
+    };
+  };
+
+  const updateActiveWorkflow = (updater: (workflow: DAGWorkflow) => DAGWorkflow) => {
+    setWorkflows((prev) => prev.map((workflow) => (workflow.id === activeWorkflowId ? updater(workflow) : workflow)));
+  };
+
+  const updateNodeById = (nodeId: string, updater: (node: DAGNode) => DAGNode) => {
+    updateActiveWorkflow((workflow) => ({
+      ...workflow,
+      nodes: workflow.nodes.map((node) => (node.id === nodeId ? updater(node) : node)),
+    }));
+  };
+
+  const updateSelectedNode = (updates: Partial<DAGNode>) => {
+    if (!selectedNodeId) return;
+    updateNodeById(selectedNodeId, (node) => ({ ...node, ...updates }));
+  };
+
+  const updateSelectedNodeConfig = (key: string, value: unknown) => {
+    if (!selectedNodeId) return;
+    updateNodeById(selectedNodeId, (node) => ({
+      ...node,
+      config: {
+        ...(node.config ?? {}),
+        [key]: value,
+      },
+    }));
+  };
+
+  const updateSelectedEdge = (updates: Partial<DAGEdge>) => {
+    if (!selectedEdgeId) return;
+    updateActiveWorkflow((workflow) => ({
+      ...workflow,
+      edges: workflow.edges.map((edge) => (edge.id === selectedEdgeId ? { ...edge, ...updates } : edge)),
+    }));
+  };
 
   const handleCreateWorkflow = () => {
     const newWorkflow = {
@@ -73,7 +462,7 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
     })
       .then((res) => res.json())
       .then((saved) => {
-        setWorkflows([saved, ...workflows]);
+        setWorkflows((prev) => [saved, ...prev]);
         setActiveWorkflowId(saved.id);
       });
   };
@@ -90,57 +479,71 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
   const handleAddNode = (type: DAGNodeType) => {
     if (!activeWorkflow) return;
     const newNode: DAGNode = {
-      id: `n-${Date.now()}`,
+      id: `n-${Date.now().toString(36)}`,
       type,
-      label: `New ${type}`,
+      label: labelForType(type),
       x: 300,
       y: 300,
+      config: defaultConfigForType(type),
+      useCompaction: type === "agent" ? true : undefined,
+      compactionStrategy: type === "agent" ? "auto" : undefined,
+      maxContextTokens: type === "agent" ? 12000 : undefined,
     };
-    setWorkflows((prev) =>
-      prev.map((wf) =>
-        wf.id === activeWorkflowId
-          ? { ...wf, nodes: [...wf.nodes, newNode] }
-          : wf,
-      ),
-    );
+    updateActiveWorkflow((workflow) => ({ ...workflow, nodes: [...workflow.nodes, newNode] }));
     setSelectedNodeId(newNode.id);
+    setSelectedEdgeId(null);
   };
 
-  const handleNodeClick = (nodeId: string) => {
-    if (edgeSource) {
-      if (edgeSource !== nodeId) {
-        // Create Edge
-        const newEdge: DAGEdge = {
-          id: `e-${Date.now()}`,
-          from: edgeSource,
-          to: nodeId,
-        };
-        setWorkflows((prev) =>
-          prev.map((wf) =>
-            wf.id === activeWorkflowId
-              ? { ...wf, edges: [...wf.edges, newEdge] }
-              : wf,
-          ),
-        );
-      }
-      setEdgeSource(null);
-    } else {
-      setSelectedNodeId(nodeId);
-    }
-  };
-
-  const handleNodeMouseDown = (
-    e: React.MouseEvent<HTMLDivElement>,
-    nodeId: string,
-  ) => {
-    if (!activeWorkflow) return;
-    if (edgeSource) return; // Prevent drag while drawing edge
-    e.preventDefault();
-    e.stopPropagation();
+  const handleNodeMouseDown = (event: React.MouseEvent<HTMLDivElement>, nodeId: string) => {
+    if (!activeWorkflow || connectionDraft) return;
+    event.preventDefault();
+    event.stopPropagation();
     setSelectedNodeId(nodeId);
-    const rect = e.currentTarget.getBoundingClientRect();
-    setDragOffset({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+    setSelectedEdgeId(null);
+    setActiveMenu(null);
+    const rect = event.currentTarget.getBoundingClientRect();
+    setDragOffset({ x: event.clientX - rect.left, y: event.clientY - rect.top });
     setIsDragging(true);
+  };
+
+  const startConnection = (event: React.MouseEvent, node: DAGNode, port: DAGPort) => {
+    if (port.direction !== "output") return;
+    event.preventDefault();
+    event.stopPropagation();
+    const start = getPortCenter(node, port, zoom);
+    setConnectionDraft({
+      sourceNodeId: node.id,
+      sourceHandleId: port.id,
+      sourceKind: port.kind,
+      start,
+      current: start,
+    });
+    setSelectedNodeId(null);
+    setSelectedEdgeId(null);
+    setActiveMenu(null);
+  };
+
+  const completeConnection = (event: React.MouseEvent, targetNode: DAGNode, targetPort: DAGPort) => {
+    if (!connectionDraft || !activeWorkflow) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const sourceNode = activeWorkflow.nodes.find((node) => node.id === connectionDraft.sourceNodeId);
+    const sourcePort = sourceNode ? getNodePorts(sourceNode).find((port) => port.id === connectionDraft.sourceHandleId) : null;
+    if (!sourceNode || !sourcePort || sourceNode.id === targetNode.id || !portsCompatible(sourcePort, targetPort)) {
+      setConnectionDraft(null);
+      return;
+    }
+
+    const newEdge: DAGEdge = {
+      id: `e-${Date.now().toString(36)}`,
+      from: sourceNode.id,
+      to: targetNode.id,
+      sourceHandle: sourcePort.id,
+      targetHandle: targetPort.id,
+      edgeType: inferEdgeType(sourcePort, targetPort),
+    };
+    updateActiveWorkflow((workflow) => ({ ...workflow, edges: [...workflow.edges, newEdge] }));
+    setConnectionDraft(null);
   };
 
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -149,42 +552,10 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
       setSelectedEdgeId(null);
       setActiveMenu(null);
     }
-    if (
-      e.button === 1 ||
-      e.shiftKey ||
-      e.target === canvasRef.current ||
-      (e.target as HTMLElement).id === "canvas-inner"
-    ) {
+    if (e.button === 1 || e.shiftKey || e.target === canvasRef.current || (e.target as HTMLElement).id === "canvas-inner") {
       setIsPanning(true);
       setDragOffset({ x: e.clientX - pan.x, y: e.clientY - pan.y });
     }
-  };
-
-  const handleUpdateNodeConfig = (
-    nodeId: string,
-    field: "chatModel" | "memory" | "tools",
-    value: string,
-  ) => {
-    setWorkflows((prev) =>
-      prev.map((wf) => {
-        if (wf.id !== activeWorkflowId) return wf;
-        return {
-          ...wf,
-          nodes: wf.nodes.map((n) => {
-            if (n.id !== nodeId) return n;
-
-            if (field === "tools") {
-              const currentTools = n.tools || [];
-              if (currentTools.includes(value)) return n; // Prevent duplicates
-              return { ...n, tools: [...currentTools, value] };
-            } else {
-              return { ...n, [field]: value };
-            }
-          }),
-        };
-      }),
-    );
-    setActiveMenu(null);
   };
 
   const handleCanvasMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -196,82 +567,22 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
       return;
     }
 
-    if (!isDragging || !selectedNodeId || !activeWorkflow || !canvasRef.current)
+    if (connectionDraft) {
+      setConnectionDraft((prev) => (prev ? { ...prev, current: getCanvasPoint(e) } : null));
       return;
+    }
+
+    if (!isDragging || !selectedNodeId || !activeWorkflow || !canvasRef.current) return;
     const rect = canvasRef.current.getBoundingClientRect();
     const x = (e.clientX - rect.left - dragOffset.x - pan.x) / zoom;
     const y = (e.clientY - rect.top - dragOffset.y - pan.y) / zoom;
-    setWorkflows((prev) =>
-      prev.map((wf) =>
-        wf.id !== activeWorkflowId
-          ? wf
-          : {
-              ...wf,
-              nodes: wf.nodes.map((n) =>
-                n.id === selectedNodeId ? { ...n, x, y } : n,
-              ),
-            },
-      ),
-    );
+    updateSelectedNode({ x, y });
   };
 
   const stopDragging = () => {
     setIsDragging(false);
     setIsPanning(false);
-  };
-
-  const updateSelectedNode = (updates: Partial<DAGNode>) => {
-    setWorkflows((prev) =>
-      prev.map((wf) =>
-        wf.id === activeWorkflowId
-          ? {
-              ...wf,
-              nodes: wf.nodes.map((n) =>
-                n.id === selectedNodeId ? { ...n, ...updates } : n,
-              ),
-            }
-          : wf,
-      ),
-    );
-  };
-
-  const updateSelectedEdge = (updates: Partial<DAGEdge>) => {
-    setWorkflows((prev) =>
-      prev.map((wf) =>
-        wf.id === activeWorkflowId
-          ? {
-              ...wf,
-              edges: wf.edges.map((e) =>
-                e.id === selectedEdgeId ? { ...e, ...updates } : e,
-              ),
-            }
-          : wf,
-      ),
-    );
-  };
-
-  const getNodeColor = (type: DAGNodeType, agentName?: AgentName) => {
-    if (type === "agent" && agentName)
-      return AGENT_CONFIGS[agentName]?.color ?? "#6366f1";
-    if (type === "condition") return "#f59e0b";
-    if (type === "parallel") return "#06b6d4";
-    if (type === "human_checkpoint") return "#ec4899";
-    if (type === "merge") return "#10b981";
-    if (type === "trigger") return "#84cc16";
-    if (type === "action") return "#d946ef";
-    return "#6366f1";
-  };
-
-  const getNodeIcon = (type: DAGNodeType, agentName?: AgentName) => {
-    if (type === "agent" && agentName)
-      return AGENT_CONFIGS[agentName]?.icon ?? "⚙️";
-    if (type === "condition") return "🔀";
-    if (type === "parallel") return "⚡";
-    if (type === "human_checkpoint") return "👤";
-    if (type === "merge") return "✅";
-    if (type === "trigger") return "🔌";
-    if (type === "action") return "🚀";
-    return "⚙️";
+    if (connectionDraft) setConnectionDraft(null);
   };
 
   const renderEdges = () => {
@@ -289,24 +600,10 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
         }}
       >
         <defs>
-          <marker
-            id="ve-arrow"
-            markerWidth="10"
-            markerHeight="7"
-            refX="9"
-            refY="3.5"
-            orient="auto"
-          >
+          <marker id="ve-arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
             <polygon points="0 0, 10 3.5, 0 7" fill="rgba(255,255,255,0.35)" />
           </marker>
-          <marker
-            id="ve-arrow-selected"
-            markerWidth="10"
-            markerHeight="7"
-            refX="9"
-            refY="3.5"
-            orient="auto"
-          >
+          <marker id="ve-arrow-selected" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
             <polygon points="0 0, 10 3.5, 0 7" fill="#6366f1" />
           </marker>
         </defs>
@@ -315,12 +612,17 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
           const toNode = activeWorkflow.nodes.find((n) => n.id === edge.to);
           if (!fromNode || !toNode) return null;
 
-          const startX = (fromNode.x + NODE_WIDTH + 6) * zoom;
-          const startY = (fromNode.y + NODE_HEIGHT / 2) * zoom;
-          const endX = (toNode.x - 6) * zoom;
-          const endY = (toNode.y + NODE_HEIGHT / 2) * zoom;
-          const midY = startY + (endY - startY) * 0.5;
-          const path = `M ${startX} ${startY} C ${startX + 40 * zoom} ${startY}, ${endX - 40 * zoom} ${endY}, ${endX} ${endY}`;
+          const sourcePort = getNodePorts(fromNode).find((p) => p.id === edge.sourceHandle);
+          const targetPort = getNodePorts(toNode).find((p) => p.id === edge.targetHandle);
+
+          const start = sourcePort
+            ? getPortCenter(fromNode, sourcePort, zoom)
+            : { x: (fromNode.x + NODE_WIDTH) * zoom, y: (fromNode.y + NODE_HEIGHT / 2) * zoom };
+          const end = targetPort
+            ? getPortCenter(toNode, targetPort, zoom)
+            : { x: toNode.x * zoom, y: (toNode.y + NODE_HEIGHT / 2) * zoom };
+
+          const path = pathForEdge(start, end, zoom);
           const isEdgeSelected = edge.id === selectedEdgeId;
 
           return (
@@ -334,98 +636,169 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
               }}
             >
               {/* Invisible thicker hit area for easy clicking */}
-              <path
-                d={path}
-                fill="none"
-                stroke="transparent"
-                strokeWidth={20}
-              />
+              <path d={path} fill="none" stroke="transparent" strokeWidth={20} />
               <path
                 d={path}
                 fill="none"
                 stroke={isEdgeSelected ? "#6366f1" : "rgba(148,163,184,0.45)"}
                 strokeWidth={isEdgeSelected ? 3 : 2}
-                markerEnd={
-                  isEdgeSelected ? "url(#ve-arrow-selected)" : "url(#ve-arrow)"
-                }
+                markerEnd={isEdgeSelected ? "url(#ve-arrow-selected)" : "url(#ve-arrow)"}
               />
-              <circle
-                cx={endX}
-                cy={endY}
-                r={4 * zoom}
-                fill={isEdgeSelected ? "#6366f1" : "#94a3b8"}
-              />
-              {(edge.label || edge.description) && (
-                <text
-                  x={(startX + endX) / 2}
-                  y={midY - 6}
-                  fill={isEdgeSelected ? "#c7d2fe" : "#a5b4fc"}
-                  fontSize="10"
-                  textAnchor="middle"
-                >
-                  {edge.label && (
-                    <tspan
-                      x={(startX + endX) / 2}
-                      dy="-0.2em"
-                      fontWeight={isEdgeSelected ? "bold" : "normal"}
-                    >
-                      {edge.label}
-                    </tspan>
-                  )}
-                  {edge.description && (
-                    <tspan
-                      x={(startX + endX) / 2}
-                      dy="1.4em"
-                      fill="#9ca3af"
-                      fontSize="9"
-                    >
-                      {edge.description.length > 30
-                        ? edge.description.substring(0, 30) + "..."
-                        : edge.description}
-                    </tspan>
-                  )}
-                </text>
-              )}
+              <circle cx={end.x} cy={end.y} r={4 * zoom} fill={isEdgeSelected ? "#6366f1" : "#94a3b8"} />
             </g>
           );
         })}
+        {connectionDraft && (
+          <path
+            d={pathForEdge(connectionDraft.start, connectionDraft.current, 1)}
+            fill="none"
+            stroke="#f59e0b"
+            strokeWidth={2}
+            strokeDasharray="4 4"
+            style={{ pointerEvents: "none" }}
+          />
+        )}
       </svg>
     );
   };
 
-  return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "280px 1fr 320px",
-        height: "100%",
-      }}
-    >
-      <aside
-        style={{
-          borderRight: "1px solid var(--border-primary)",
-          background: "rgba(10,14,24,0.9)",
-          padding: "14px",
-          overflowY: "auto",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: "10px",
-          }}
-        >
+  const renderPorts = (node: DAGNode) => {
+    return getNodePorts(node).map((port) => {
+      const side = getPortSide(port);
+      const isBottomResource = side === "bottom";
+      const isInput = port.direction === "input";
+      const isOutput = port.direction === "output";
+
+      if (isBottomResource) {
+        // Draw the bottom handle block
+        const center = getPortCenter(node, port, zoom);
+        // Translate to relative coords inside node container
+        const left = center.x / zoom - node.x;
+        const top = center.y / zoom - node.y;
+
+        const isHovered = activeMenu?.nodeId === node.id && activeMenu.portId === port.id;
+        const iconColor =
+          port.kind === "tool" ? "#10b981" : port.kind === "memory" ? "#f59e0b" : port.kind === "model" ? "#818cf8" : "#38bdf8";
+
+        return (
           <div
+            key={port.id}
+            onClick={(e) => {
+              e.stopPropagation();
+              setActiveMenu(isHovered ? null : { nodeId: node.id, portId: port.id });
+            }}
+            onMouseUp={(e) => isInput && completeConnection(e, node, port)}
             style={{
-              fontSize: "11px",
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-              color: "var(--text-muted)",
+              position: "absolute",
+              left: `${left - RESOURCE_BOX_SIZE / 2}px`,
+              top: `${top - RESOURCE_BOX_SIZE / 2}px`,
+              width: `${RESOURCE_BOX_SIZE}px`,
+              height: `${RESOURCE_BOX_SIZE}px`,
+              borderRadius: "4px",
+              background: "rgba(15,23,42,0.95)",
+              border: `1px solid ${iconColor}`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              color: iconColor,
+              fontSize: "12px",
+              boxShadow: `0 0 8px ${iconColor}44`,
+              zIndex: 30,
             }}
           >
-            Workflow Catalog
+            +
+            <div
+              style={{
+                position: "absolute",
+                top: "-18px",
+                width: "2px",
+                height: "16px",
+                background: "rgba(148,163,184,0.3)",
+                pointerEvents: "none",
+              }}
+            />
+            <span
+              style={{
+                position: "absolute",
+                top: "24px",
+                fontSize: "9px",
+                color: "#94a3b8",
+                whiteSpace: "nowrap",
+                pointerEvents: "none",
+              }}
+            >
+              {port.label}
+            </span>
+
+            {/* Popup Menu */}
+            {isHovered && (
+              <div
+                style={{
+                  position: "absolute",
+                  top: "35px",
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  background: "#1e293b",
+                  border: "1px solid #334155",
+                  borderRadius: "8px",
+                  padding: "8px",
+                  width: "140px",
+                  zIndex: 50,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "6px",
+                  boxShadow: "0 10px 25px rgba(0,0,0,0.5)",
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div style={{ fontSize: "10px", color: "#cbd5e1", fontWeight: "bold", marginBottom: "4px" }}>
+                  Configure {port.label}
+                </div>
+                <div style={{ fontSize: "11px", color: "#94a3b8" }}>
+                  Please use Node Inspector to configure this connection, or drag an edge to a node.
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      // Draw standard side handle
+      const center = getPortCenter(node, port, zoom);
+      const left = center.x / zoom - node.x;
+      const top = center.y / zoom - node.y;
+
+      return (
+        <div
+          key={port.id}
+          onMouseDown={(e) => isOutput && startConnection(e, node, port)}
+          onMouseUp={(e) => isInput && completeConnection(e, node, port)}
+          style={{
+            position: "absolute",
+            left: `${left - HANDLE_SIZE / 2}px`,
+            top: `${top - HANDLE_SIZE / 2}px`,
+            width: `${HANDLE_SIZE}px`,
+            height: `${HANDLE_SIZE}px`,
+            borderRadius: "50%",
+            background: port.direction === "output" ? "#10b981" : "#94a3b8",
+            border: "2px solid #0f172a",
+            cursor: port.direction === "output" ? "crosshair" : "default",
+            zIndex: 25,
+          }}
+          title={port.label}
+        />
+      );
+    });
+  };
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "280px 1fr 320px", height: "100%" }}>
+      {/* Left Sidebar - Workflow List */}
+      <aside style={{ borderRight: "1px solid var(--border-primary)", background: "rgba(10,14,24,0.9)", padding: "14px", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+          <div style={{ fontSize: "11px", letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-muted)" }}>
+            Workflows
           </div>
           <button
             onClick={handleCreateWorkflow}
@@ -457,65 +830,28 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
                   textAlign: "left",
                   padding: "10px 12px",
                   borderRadius: "10px",
-                  border: active
-                    ? "1px solid rgba(99,102,241,0.5)"
-                    : "1px solid var(--border-primary)",
-                  background: active
-                    ? "rgba(99,102,241,0.15)"
-                    : "rgba(255,255,255,0.03)",
+                  border: active ? "1px solid rgba(99,102,241,0.5)" : "1px solid var(--border-primary)",
+                  background: active ? "rgba(99,102,241,0.15)" : "rgba(255,255,255,0.03)",
                   color: active ? "#c7d2fe" : "var(--text-secondary)",
                   cursor: "pointer",
                 }}
               >
-                <div
-                  style={{
-                    fontWeight: 600,
-                    fontSize: "13px",
-                    color: active ? "#e0e7ff" : "#d1d5db",
-                  }}
-                >
-                  {wf.name}
-                </div>
-                <div
-                  style={{ fontSize: "11px", marginTop: "4px", opacity: 0.8 }}
-                >
-                  {wf.description}
-                </div>
+                <div style={{ fontWeight: 600, fontSize: "13px", color: active ? "#e0e7ff" : "#d1d5db" }}>{wf.name}</div>
+                <div style={{ fontSize: "11px", marginTop: "4px", opacity: 0.8 }}>{wf.description}</div>
               </button>
             );
           })}
         </div>
 
-        <div
-          style={{
-            marginTop: "20px",
-            paddingTop: "14px",
-            borderTop: "1px solid var(--border-primary)",
-          }}
-        >
-          <div
-            style={{
-              fontSize: "11px",
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-              color: "var(--text-muted)",
-              marginBottom: "10px",
-            }}
-          >
-            Node Palette (Drag & Drop)
+        <div style={{ marginTop: "20px", paddingTop: "14px", borderTop: "1px solid var(--border-primary)" }}>
+          <div style={{ fontSize: "11px", letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: "10px" }}>
+            Add Components
           </div>
-          {[
-            "trigger",
-            "agent",
-            "condition",
-            "parallel",
-            "action",
-            "human_checkpoint",
-            "merge",
-          ].map((type) => (
+          {/* Core Nodes */}
+          {CORE_NODE_TYPES.map((type) => (
             <button
               key={type}
-              onClick={() => handleAddNode(type as DAGNodeType)}
+              onClick={() => handleAddNode(type)}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -531,136 +867,62 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
                 cursor: "pointer",
               }}
             >
-              <span
-                style={{
-                  width: "8px",
-                  height: "8px",
-                  borderRadius: "999px",
-                  background: getNodeColor(type as DAGNodeType),
-                }}
-              />
-              <span>+ Add {type.replace("_", " ")}</span>
+              <span style={{ width: "8px", height: "8px", borderRadius: "999px", background: getNodeColor(type) }} />
+              <span>+ Add {labelForType(type)}</span>
+            </button>
+          ))}
+          {/* Component Nodes */}
+          <div style={{ fontSize: "11px", letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-muted)", marginTop: "16px", marginBottom: "10px" }}>
+            Resources
+          </div>
+          {COMPONENT_NODE_TYPES.map((type) => (
+            <button
+              key={type}
+              onClick={() => handleAddNode(type)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                fontSize: "12px",
+                color: "var(--text-secondary)",
+                marginBottom: "6px",
+                width: "100%",
+                background: "transparent",
+                border: "1px solid rgba(255,255,255,0.1)",
+                padding: "8px",
+                borderRadius: "6px",
+                cursor: "pointer",
+              }}
+            >
+              <span style={{ width: "8px", height: "8px", borderRadius: "999px", background: getNodeColor(type) }} />
+              <span>+ Add {labelForType(type)}</span>
             </button>
           ))}
         </div>
       </aside>
 
-      <section
-        style={{ display: "flex", flexDirection: "column", minWidth: 0 }}
-      >
-        <div
-          style={{
-            padding: "12px 16px",
-            borderBottom: "1px solid var(--border-primary)",
-            background: "rgba(9,12,20,0.9)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-          }}
-        >
+      {/* Main Canvas Area */}
+      <section style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+        {/* Canvas Toolbar */}
+        <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-primary)", background: "rgba(9,12,20,0.9)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
-            <div
-              style={{ fontSize: "15px", fontWeight: 700, color: "#e5e7eb" }}
-            >
-              {activeWorkflow?.name || "Loading..."}
-            </div>
-            <div
-              style={{
-                fontSize: "12px",
-                color: "var(--text-muted)",
-                marginTop: "2px",
-              }}
-            >
-              Interactive Workflow Builder
-            </div>
+            <div style={{ fontSize: "15px", fontWeight: 700, color: "#e5e7eb" }}>{activeWorkflow?.name || "Loading..."}</div>
+            <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "2px" }}>Interactive Workflow Builder</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <button
-              onClick={() =>
-                setZoom((z) => Math.max(0.6, Number((z - 0.1).toFixed(2))))
-              }
-              style={{
-                padding: "6px 10px",
-                borderRadius: "8px",
-                border: "1px solid var(--border-primary)",
-                background: "rgba(255,255,255,0.04)",
-                color: "#d1d5db",
-                cursor: "pointer",
-              }}
-            >
-              -
-            </button>
-            <div
-              style={{
-                fontFamily: "var(--font-mono)",
-                fontSize: "12px",
-                color: "#94a3b8",
-                minWidth: "52px",
-                textAlign: "center",
-              }}
-            >
-              {Math.round(zoom * 100)}%
-            </div>
-            <button
-              onClick={() =>
-                setZoom((z) => Math.min(1.8, Number((z + 0.1).toFixed(2))))
-              }
-              style={{
-                padding: "6px 10px",
-                borderRadius: "8px",
-                border: "1px solid var(--border-primary)",
-                background: "rgba(255,255,255,0.04)",
-                color: "#d1d5db",
-                cursor: "pointer",
-              }}
-            >
-              +
-            </button>
+            <button onClick={() => setZoom((z) => Math.max(0.6, Number((z - 0.1).toFixed(2))))} style={{ padding: "6px 10px", borderRadius: "8px", border: "1px solid var(--border-primary)", background: "rgba(255,255,255,0.04)", color: "#d1d5db", cursor: "pointer" }}>-</button>
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: "12px", color: "#94a3b8", minWidth: "52px", textAlign: "center" }}>{Math.round(zoom * 100)}%</div>
+            <button onClick={() => setZoom((z) => Math.min(1.8, Number((z + 0.1).toFixed(2))))} style={{ padding: "6px 10px", borderRadius: "8px", border: "1px solid var(--border-primary)", background: "rgba(255,255,255,0.04)", color: "#d1d5db", cursor: "pointer" }}>+</button>
 
-            <button
-              onClick={handleSaveWorkflow}
-              style={{
-                marginLeft: "6px",
-                padding: "8px 14px",
-                borderRadius: "9px",
-                border: "1px solid rgba(16,185,129,0.4)",
-                background: "rgba(16,185,129,0.1)",
-                color: "#34d399",
-                fontSize: "12px",
-                fontWeight: 700,
-                cursor: "pointer",
-              }}
-            >
-              Save Workflow
-            </button>
-
-            <button
-              onClick={() => activeWorkflow && onRunWorkflow(activeWorkflow.id)}
-              style={{
-                marginLeft: "6px",
-                padding: "8px 14px",
-                borderRadius: "9px",
-                border: "1px solid rgba(16,185,129,0.4)",
-                background:
-                  "linear-gradient(135deg, rgba(16,185,129,0.35), rgba(5,150,105,0.22))",
-                color: "#ecfdf5",
-                fontSize: "12px",
-                fontWeight: 700,
-                cursor: "pointer",
-              }}
-            >
-              Run Workflow
-            </button>
+            <button onClick={handleSaveWorkflow} style={{ marginLeft: "6px", padding: "8px 14px", borderRadius: "9px", border: "1px solid rgba(16,185,129,0.4)", background: "rgba(16,185,129,0.1)", color: "#34d399", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}>Save Workflow</button>
+            <button onClick={() => activeWorkflow && onRunWorkflow(activeWorkflow.id)} style={{ marginLeft: "6px", padding: "8px 14px", borderRadius: "9px", border: "1px solid rgba(16,185,129,0.4)", background: "linear-gradient(135deg, rgba(16,185,129,0.35), rgba(5,150,105,0.22))", color: "#ecfdf5", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}>Run Workflow</button>
           </div>
         </div>
 
+        {/* Canvas */}
         <div
           ref={canvasRef}
-          onClick={() => {
-            setSelectedNodeId(null);
-            setSelectedEdgeId(null);
-            if (edgeSource) setEdgeSource(null);
-          }}
+          onClick={() => { setSelectedNodeId(null); setSelectedEdgeId(null); }}
           onMouseMove={handleCanvasMouseMove}
           onMouseUp={stopDragging}
           onMouseLeave={stopDragging}
@@ -670,465 +932,55 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
             flex: 1,
             overflow: "hidden",
             backgroundColor: "#070b14",
-            backgroundImage:
-              "linear-gradient(rgba(148,163,184,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,0.08) 1px, transparent 1px)",
+            backgroundImage: "linear-gradient(rgba(148,163,184,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,0.08) 1px, transparent 1px)",
             backgroundSize: `${24 * zoom}px ${24 * zoom}px`,
             backgroundPosition: `${pan.x}px ${pan.y}px`,
             cursor: isPanning ? "grabbing" : "grab",
           }}
         >
-          <div
-            id="canvas-inner"
-            style={{
-              position: "absolute",
-              inset: 0,
-              transform: `translate(${pan.x}px, ${pan.y}px)`,
-            }}
-          >
+          <div id="canvas-inner" style={{ position: "absolute", inset: 0, transform: `translate(${pan.x}px, ${pan.y}px)` }}>
             {renderEdges()}
             {activeWorkflow?.nodes.map((node) => {
               const isSelected = node.id === selectedNodeId;
-              const isEdgeSource = node.id === edgeSource;
               const nodeColor = getNodeColor(node.type, node.agentName);
               const nodeIcon = getNodeIcon(node.type, node.agentName);
-
-              const isConnector =
-                node.type === "trigger" || node.type === "action";
-              const isCondition = node.type === "condition";
-
-              let clipPath = "none";
-              let borderRadius = 12 * zoom;
-              let customPadding = `${10 * zoom}px ${12 * zoom}px`;
-              let customFlexDirection: "row" | "column" = "row";
-              let heightStr = "auto";
-
-              if (isConnector) {
-                clipPath = "polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)";
-                borderRadius = 0;
-                customPadding = `${25 * zoom}px ${45 * zoom}px`;
-                customFlexDirection = "column";
-                heightStr = `${NODE_WIDTH * zoom}px`; // Make it a perfect square bounding box so it becomes a perfect diamond
-              } else if (isCondition) {
-                clipPath =
-                  "polygon(15% 0, 85% 0, 100% 50%, 85% 100%, 15% 100%, 0 50%)";
-                borderRadius = 0;
-                customPadding = `${15 * zoom}px ${35 * zoom}px`;
-              }
-
-              // We rely on drop-shadow instead of box-shadow because clip-path hides box-shadow
-              const shadowFilter = isSelected
-                ? `drop-shadow(0 0 8px ${nodeColor})`
-                : "drop-shadow(0 10px 15px rgba(2,6,23,0.45))";
-              const borderStyle =
-                isConnector || isCondition
-                  ? "none"
-                  : `1px solid ${isSelected ? nodeColor : isEdgeSource ? "#f59e0b" : "rgba(148,163,184,0.28)"}`;
 
               return (
                 <div
                   key={node.id}
-                  style={{
-                    position: "absolute",
-                    left: node.x * zoom,
-                    top: node.y * zoom,
-                  }}
+                  style={{ position: "absolute", left: node.x * zoom, top: node.y * zoom }}
                 >
-                  {/* The Main Node Container */}
                   <div
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleNodeClick(node.id);
-                      setSelectedEdgeId(null);
-                      setActiveMenu(null);
-                    }}
+                    onClick={(e) => { e.stopPropagation(); setSelectedNodeId(node.id); setSelectedEdgeId(null); setActiveMenu(null); }}
                     onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
                     style={{
                       position: "relative",
                       width: NODE_WIDTH * zoom,
-                      minHeight: isConnector ? heightStr : NODE_HEIGHT * zoom,
-                      height: isConnector ? heightStr : "auto",
-                      borderRadius,
-                      clipPath,
-                      border: borderStyle,
-                      background:
-                        isSelected && (isConnector || isCondition)
-                          ? `linear-gradient(135deg, ${nodeColor}22, rgba(9,14,28,0.98))`
-                          : "linear-gradient(135deg, rgba(15,23,42,0.96), rgba(9,14,28,0.98))",
-                      filter: shadowFilter,
-                      boxShadow:
-                        isConnector || isCondition
-                          ? "none"
-                          : isSelected
-                            ? `0 0 0 1px ${nodeColor}, 0 18px 38px rgba(2,6,23,0.65)`
-                            : "none",
+                      height: NODE_HEIGHT * zoom,
+                      borderRadius: 12 * zoom,
+                      border: `1px solid ${isSelected ? nodeColor : "rgba(148,163,184,0.28)"}`,
+                      background: "linear-gradient(135deg, rgba(15,23,42,0.96), rgba(9,14,28,0.98))",
+                      boxShadow: isSelected ? `0 0 0 1px ${nodeColor}, 0 18px 38px rgba(2,6,23,0.65)` : "none",
                       zIndex: isSelected ? 20 : 10,
-                      cursor:
-                        isDragging && isSelected
-                          ? "grabbing"
-                          : edgeSource
-                            ? "crosshair"
-                            : "pointer",
-                      userSelect: "none",
-                      overflow: "visible",
+                      cursor: isDragging && isSelected ? "grabbing" : "pointer",
                       display: "flex",
                       flexDirection: "column",
                       justifyContent: "center",
                     }}
                   >
-                    {!(isConnector || isCondition) && (
-                      <div
-                        style={{
-                          height: "4px",
-                          background: nodeColor,
-                          opacity: 0.9,
-                          flexShrink: 0,
-                        }}
-                      />
-                    )}
-                    <div
-                      style={{
-                        padding: customPadding,
-                        display: "flex",
-                        flexDirection: customFlexDirection,
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: `${10 * zoom}px`,
-                        flex: 1,
-                      }}
-                    >
-                      <div
-                        style={{
-                          width: `${30 * zoom}px`,
-                          height: `${30 * zoom}px`,
-                          borderRadius: `${8 * zoom}px`,
-                          background: `${nodeColor}24`,
-                          color: nodeColor,
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          fontSize: `${16 * zoom}px`,
-                          flexShrink: 0,
-                        }}
-                      >
+                    <div style={{ height: "4px", background: nodeColor, opacity: 0.9, flexShrink: 0, borderTopLeftRadius: 10 * zoom, borderTopRightRadius: 10 * zoom }} />
+                    <div style={{ padding: `${10 * zoom}px ${12 * zoom}px`, display: "flex", alignItems: "center", gap: `${10 * zoom}px`, flex: 1 }}>
+                      <div style={{ width: `${30 * zoom}px`, height: `${30 * zoom}px`, borderRadius: `${8 * zoom}px`, background: `${nodeColor}24`, color: nodeColor, display: "flex", alignItems: "center", justifyContent: "center", fontSize: `${16 * zoom}px`, flexShrink: 0 }}>
                         {nodeIcon}
                       </div>
-                      <div
-                        style={{
-                          minWidth: 0,
-                          textAlign:
-                            customFlexDirection === "column"
-                              ? "center"
-                              : "left",
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontSize: `${12 * zoom}px`,
-                            fontWeight: 700,
-                            color: "#e2e8f0",
-                            whiteSpace: "nowrap",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                          }}
-                        >
-                          {node.label}
-                        </div>
-                        <div
-                          style={{
-                            fontSize: `${10 * zoom}px`,
-                            color: "#94a3b8",
-                            textTransform: "uppercase",
-                            letterSpacing: "0.08em",
-                          }}
-                        >
-                          {node.type}
-                        </div>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: `${12 * zoom}px`, fontWeight: 700, color: "#e2e8f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{node.label}</div>
+                        <div style={{ fontSize: `${10 * zoom}px`, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.08em" }}>{labelForType(node.type)}</div>
                       </div>
                     </div>
-                    {!(isConnector || isCondition) && (
-                      <div
-                        style={{
-                          padding: `0 ${12 * zoom}px ${10 * zoom}px`,
-                          fontSize: `${10 * zoom}px`,
-                          color: "#a5b4fc",
-                          fontFamily: "var(--font-mono)",
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                        }}
-                      >
-                        {node.agentName || node.connectorId || node.id}
-                      </div>
-                    )}
-
-                    {/* Left Edge: Input Connection */}
-                    {!(isConnector && node.type === "trigger") && (
-                      <div
-                        style={{
-                          position: "absolute",
-                          left: -6 * zoom,
-                          top: "50%",
-                          transform: "translateY(-50%)",
-                          width: 12 * zoom,
-                          height: 12 * zoom,
-                          borderRadius: "50%",
-                          background: "#94a3b8",
-                          border: "2px solid #0f172a",
-                          cursor: "crosshair",
-                          zIndex: 25,
-                        }}
-                      />
-                    )}
-
-                    {/* Right Edge: Output Connection */}
-                    <div
-                      style={{
-                        position: "absolute",
-                        right: -6 * zoom,
-                        top: "50%",
-                        transform: "translateY(-50%)",
-                        width: 12 * zoom,
-                        height: 12 * zoom,
-                        borderRadius: "50%",
-                        background: "#94a3b8",
-                        border: "2px solid #0f172a",
-                        cursor: "crosshair",
-                        zIndex: 25,
-                      }}
-                    />
                   </div>
-
-                  {/* Bottom Extension Handles (Chat Model, Memory, Tool) */}
-                  {node.type === "agent" && (
-                    <div
-                      style={{
-                        position: "absolute",
-                        width: "100%",
-                        bottom: -40 * zoom,
-                        display: "flex",
-                        justifyContent: "space-evenly",
-                        zIndex: 15,
-                      }}
-                    >
-                      {(["Chat Model", "Memory", "Tool"] as const).map(
-                        (handleType) => {
-                          let boxColor = "#6366f1";
-                          let isConfigured = false;
-                          let count = 0;
-
-                          if (handleType === "Chat Model" && node.chatModel) {
-                            isConfigured = true;
-                          }
-                          if (handleType === "Memory" && node.memory) {
-                            isConfigured = true;
-                            boxColor = "#f59e0b";
-                          }
-                          if (handleType === "Tool") {
-                            boxColor = "#10b981";
-                            count = node.tools?.length || 0;
-                            isConfigured = count > 0;
-                          }
-
-                          return (
-                            <div
-                              key={handleType}
-                              style={{
-                                position: "relative",
-                                display: "flex",
-                                flexDirection: "column",
-                                alignItems: "center",
-                              }}
-                            >
-                              {/* The line popping out the bottom */}
-                              <div
-                                style={{
-                                  width: 2 * zoom,
-                                  height: 16 * zoom,
-                                  background: "rgba(148,163,184,0.28)",
-                                }}
-                              />
-
-                              {/* The Handle Box */}
-                              <div
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setActiveMenu(
-                                    activeMenu?.nodeId === node.id &&
-                                      activeMenu.handleType === handleType
-                                      ? null
-                                      : { nodeId: node.id, handleType },
-                                  );
-                                }}
-                                style={{
-                                  width: 22 * zoom,
-                                  height: 22 * zoom,
-                                  borderRadius: 4 * zoom,
-                                  background: "rgba(15,23,42,0.9)",
-                                  border: `1px solid ${boxColor}`,
-                                  display: "flex",
-                                  alignItems: "center",
-                                  justifyContent: "center",
-                                  cursor: "pointer",
-                                  color: boxColor,
-                                  fontSize: 14 * zoom,
-                                  boxShadow: `0 0 8px ${boxColor}44`,
-                                  transition: "transform 0.1s",
-                                }}
-                              >
-                                {isConfigured
-                                  ? handleType === "Tool"
-                                    ? count
-                                    : "✓"
-                                  : "+"}
-                              </div>
-                              {/* Label */}
-                              <span
-                                style={{
-                                  fontSize: 9 * zoom,
-                                  color: "#94a3b8",
-                                  marginTop: 4 * zoom,
-                                  fontWeight: 500,
-                                }}
-                              >
-                                {handleType}
-                              </span>
-
-                              {/* Pop-up menu when this handle is clicked */}
-                              {activeMenu?.nodeId === node.id &&
-                                activeMenu?.handleType === handleType && (
-                                  <div
-                                    style={{
-                                      position: "absolute",
-                                      top: 45 * zoom,
-                                      background: "#1e293b",
-                                      border: "1px solid #334155",
-                                      borderRadius: 8 * zoom,
-                                      padding: 8 * zoom,
-                                      width: 140 * zoom,
-                                      zIndex: 50,
-                                      display: "flex",
-                                      flexDirection: "column",
-                                      gap: 6 * zoom,
-                                      boxShadow: "0 10px 25px rgba(0,0,0,0.5)",
-                                    }}
-                                  >
-                                    <div
-                                      style={{
-                                        fontSize: 10 * zoom,
-                                        color: "#cbd5e1",
-                                        fontWeight: "bold",
-                                        marginBottom: 4 * zoom,
-                                      }}
-                                    >
-                                      Select {handleType}
-                                    </div>
-
-                                    {handleType === "Tool" &&
-                                      ["searchWeb", "readFile", "lintCode"].map(
-                                        (tool) => (
-                                          <button
-                                            key={tool}
-                                            onClick={() =>
-                                              handleUpdateNodeConfig(
-                                                node.id,
-                                                "tools",
-                                                tool,
-                                              )
-                                            }
-                                            style={{
-                                              textAlign: "left",
-                                              padding: "4px 8px",
-                                              background: node.tools?.includes(
-                                                tool,
-                                              )
-                                                ? "#10b98133"
-                                                : "transparent",
-                                              color: "#f8fafc",
-                                              border: "none",
-                                              borderRadius: 4,
-                                              cursor: "pointer",
-                                              fontSize: 11 * zoom,
-                                            }}
-                                          >
-                                            {tool}{" "}
-                                            {node.tools?.includes(tool) && "✓"}
-                                          </button>
-                                        ),
-                                      )}
-
-                                    {handleType === "Chat Model" &&
-                                      [
-                                        "llama-3.3-70b",
-                                        "gpt-4o-mini",
-                                        "claude-3-haiku",
-                                      ].map((model) => (
-                                        <button
-                                          key={model}
-                                          onClick={() =>
-                                            handleUpdateNodeConfig(
-                                              node.id,
-                                              "chatModel",
-                                              model,
-                                            )
-                                          }
-                                          style={{
-                                            textAlign: "left",
-                                            padding: "4px 8px",
-                                            background:
-                                              node.chatModel === model
-                                                ? "#6366f133"
-                                                : "transparent",
-                                            color: "#f8fafc",
-                                            border: "none",
-                                            borderRadius: 4,
-                                            cursor: "pointer",
-                                            fontSize: 11 * zoom,
-                                          }}
-                                        >
-                                          {model}
-                                        </button>
-                                      ))}
-
-                                    {handleType === "Memory" &&
-                                      [
-                                        "Buffer Memory",
-                                        "Summary Memory",
-                                        "Vector Store",
-                                      ].map((mem) => (
-                                        <button
-                                          key={mem}
-                                          onClick={() =>
-                                            handleUpdateNodeConfig(
-                                              node.id,
-                                              "memory",
-                                              mem,
-                                            )
-                                          }
-                                          style={{
-                                            textAlign: "left",
-                                            padding: "4px 8px",
-                                            background:
-                                              node.memory === mem
-                                                ? "#f59e0b33"
-                                                : "transparent",
-                                            color: "#f8fafc",
-                                            border: "none",
-                                            borderRadius: 4,
-                                            cursor: "pointer",
-                                            fontSize: 11 * zoom,
-                                          }}
-                                        >
-                                          {mem}
-                                        </button>
-                                      ))}
-                                  </div>
-                                )}
-                            </div>
-                          );
-                        },
-                      )}
-                    </div>
-                  )}
+                  {/* Render the ports (handles) for this node */}
+                  {renderPorts(node)}
                 </div>
               );
             })}
@@ -1136,501 +988,53 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
         </div>
       </section>
 
-      <aside
-        style={{
-          borderLeft: "1px solid var(--border-primary)",
-          background: "rgba(10,14,24,0.9)",
-          padding: "14px",
-          overflowY: "auto",
-        }}
-      >
-        <div
-          style={{
-            fontSize: "11px",
-            letterSpacing: "0.08em",
-            textTransform: "uppercase",
-            color: "var(--text-muted)",
-            marginBottom: "8px",
-          }}
-        >
-          {selectedNode
-            ? "Node Inspector"
-            : selectedEdge
-              ? "Edge Inspector"
-              : "Workflow Config"}
+      {/* Right Sidebar - Inspector */}
+      <aside style={{ borderLeft: "1px solid var(--border-primary)", background: "rgba(10,14,24,0.9)", padding: "14px", overflowY: "auto" }}>
+        <div style={{ fontSize: "11px", letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-muted)", marginBottom: "8px" }}>
+          {selectedNode ? "Node Inspector" : selectedEdge ? "Edge Inspector" : "Workflow Config"}
         </div>
         {!selectedNode && !selectedEdge && activeWorkflow && (
-          <div
-            style={{ display: "flex", flexDirection: "column", gap: "10px" }}
-          >
-            <div
-              style={{
-                padding: "10px",
-                borderRadius: "9px",
-                border: "1px solid var(--border-primary)",
-                background: "rgba(255,255,255,0.03)",
-              }}
-            >
-              <div
-                style={{
-                  color: "var(--text-muted)",
-                  fontSize: "12px",
-                  marginBottom: "6px",
-                }}
-              >
-                Workflow Name
-              </div>
-              <input
-                type="text"
-                value={activeWorkflow.name}
-                onChange={(e) =>
-                  setWorkflows((prev) =>
-                    prev.map((w) =>
-                      w.id === activeWorkflow.id
-                        ? { ...w, name: e.target.value }
-                        : w,
-                    ),
-                  )
-                }
-                style={{
-                  width: "100%",
-                  background: "rgba(0,0,0,0.2)",
-                  border: "1px solid var(--border-primary)",
-                  color: "white",
-                  padding: "8px",
-                  borderRadius: "4px",
-                  outline: "none",
-                  fontSize: "12px",
-                }}
-              />
-            </div>
-
-            <div
-              style={{
-                padding: "10px",
-                borderRadius: "9px",
-                border: "1px solid var(--border-primary)",
-                background: "rgba(255,255,255,0.03)",
-              }}
-            >
-              <div
-                style={{
-                  color: "var(--text-muted)",
-                  fontSize: "12px",
-                  marginBottom: "6px",
-                }}
-              >
-                Cron Schedule (e.g. */5 * * * *)
-              </div>
-              <input
-                type="text"
-                placeholder="Leave blank for manual trigger only"
-                value={activeWorkflow.cron_schedule || ""}
-                onChange={(e) =>
-                  setWorkflows((prev) =>
-                    prev.map((w) =>
-                      w.id === activeWorkflow.id
-                        ? { ...w, cron_schedule: e.target.value }
-                        : w,
-                    ),
-                  )
-                }
-                style={{
-                  width: "100%",
-                  background: "rgba(0,0,0,0.2)",
-                  border: "1px solid var(--border-primary)",
-                  color: "white",
-                  padding: "8px",
-                  borderRadius: "4px",
-                  outline: "none",
-                  fontSize: "12px",
-                }}
-              />
-              <div
-                style={{
-                  color: "var(--text-muted)",
-                  fontSize: "10px",
-                  marginTop: "6px",
-                  lineHeight: 1.4,
-                }}
-              >
-                A standard Cron string. Examples:
-                <br />
-                <b>*/5 * * * *</b> (Every 5 mins)
-                <br />
-                <b>0 * * * *</b> (Hourly)
-              </div>
-            </div>
-
-            <div
-              style={{
-                padding: "10px",
-                borderRadius: "9px",
-                border: "1px solid var(--border-primary)",
-                background: "rgba(255,255,255,0.03)",
-              }}
-            >
-              <div
-                style={{
-                  color: "var(--text-muted)",
-                  fontSize: "12px",
-                  marginBottom: "6px",
-                }}
-              >
-                Description
-              </div>
-              <textarea
-                value={activeWorkflow.description || ""}
-                onChange={(e) =>
-                  setWorkflows((prev) =>
-                    prev.map((w) =>
-                      w.id === activeWorkflow.id
-                        ? { ...w, description: e.target.value }
-                        : w,
-                    ),
-                  )
-                }
-                style={{
-                  width: "100%",
-                  background: "rgba(0,0,0,0.2)",
-                  border: "1px solid var(--border-primary)",
-                  color: "white",
-                  padding: "8px",
-                  borderRadius: "4px",
-                  outline: "none",
-                  fontSize: "12px",
-                  minHeight: "60px",
-                  resize: "vertical",
-                }}
-              />
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            <div style={{ padding: "10px", borderRadius: "9px", border: "1px solid var(--border-primary)", background: "rgba(255,255,255,0.03)" }}>
+              <div style={{ color: "var(--text-muted)", fontSize: "12px", marginBottom: "6px" }}>Workflow Name</div>
+              <input type="text" value={activeWorkflow.name} onChange={(e) => updateActiveWorkflow((w) => ({ ...w, name: e.target.value }))} style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid var(--border-primary)", color: "white", padding: "8px", borderRadius: "4px", outline: "none", fontSize: "12px" }} />
             </div>
           </div>
         )}
         {selectedNode && (
-          <div
-            style={{ display: "flex", flexDirection: "column", gap: "10px" }}
-          >
-            <div
-              style={{
-                padding: "12px",
-                borderRadius: "10px",
-                border: "1px solid rgba(99,102,241,0.3)",
-                background: "rgba(99,102,241,0.1)",
-              }}
-            >
-              <input
-                type="text"
-                value={selectedNode.label}
-                onChange={(e) => updateSelectedNode({ label: e.target.value })}
-                style={{
-                  width: "100%",
-                  background: "transparent",
-                  border: "none",
-                  color: "#e0e7ff",
-                  fontWeight: 700,
-                  fontSize: "13px",
-                  outline: "none",
-                }}
-              />
-              <div
-                style={{ color: "#a5b4fc", fontSize: "11px", marginTop: "4px" }}
-              >
-                {selectedNode.type}
-              </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            <div style={{ padding: "12px", borderRadius: "10px", border: "1px solid rgba(99,102,241,0.3)", background: "rgba(99,102,241,0.1)" }}>
+              <input type="text" value={selectedNode.label} onChange={(e) => updateSelectedNode({ label: e.target.value })} style={{ width: "100%", background: "transparent", border: "none", color: "#e0e7ff", fontWeight: 700, fontSize: "13px", outline: "none" }} />
+              <div style={{ color: "#a5b4fc", fontSize: "11px", marginTop: "4px" }}>{labelForType(selectedNode.type)}</div>
             </div>
-
-            <div
-              style={{
-                padding: "10px",
-                borderRadius: "9px",
-                border: "1px solid var(--border-primary)",
-                background: "rgba(255,255,255,0.03)",
-                fontSize: "12px",
-              }}
-            >
-              <div style={{ color: "var(--text-muted)", marginBottom: "6px" }}>
-                Node ID
-              </div>
-              <div style={{ color: "#cbd5e1", fontFamily: "var(--font-mono)" }}>
-                {selectedNode.id}
-              </div>
-            </div>
-
-            {selectedNode.type === "agent" && (
-              <div
-                style={{
-                  padding: "10px",
-                  borderRadius: "9px",
-                  border: "1px solid var(--border-primary)",
-                  background: "rgba(255,255,255,0.03)",
-                  fontSize: "12px",
-                }}
-              >
-                <div
-                  style={{ color: "var(--text-muted)", marginBottom: "6px" }}
-                >
-                  Bound Agent
-                </div>
-                <select
-                  value={selectedNode.agentName || ""}
-                  onChange={(e) =>
-                    updateSelectedNode({
-                      agentName: e.target.value as AgentName,
-                    })
-                  }
-                  style={{
-                    width: "100%",
-                    background: "rgba(0,0,0,0.2)",
-                    border: "1px solid var(--border-primary)",
-                    color: "white",
-                    padding: "6px",
-                    borderRadius: "4px",
-                  }}
-                >
-                  <option value="">-- Select Agent --</option>
-                  {Object.keys(AGENT_CONFIGS).map((agent) => (
-                    <option key={agent} value={agent}>
-                      {agent}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {(selectedNode.type === "trigger" ||
-              selectedNode.type === "action") && (
-              <div
-                style={{
-                  padding: "10px",
-                  borderRadius: "9px",
-                  border: "1px solid var(--border-primary)",
-                  background: "rgba(255,255,255,0.03)",
-                  fontSize: "12px",
-                }}
-              >
-                <div
-                  style={{ color: "var(--text-muted)", marginBottom: "6px" }}
-                >
-                  Connector
-                </div>
-                <select
-                  value={selectedNode.connectorId || ""}
-                  onChange={(e) =>
-                    updateSelectedNode({ connectorId: e.target.value })
-                  }
-                  style={{
-                    width: "100%",
-                    background: "rgba(0,0,0,0.2)",
-                    border: "1px solid var(--border-primary)",
-                    color: "white",
-                    padding: "6px",
-                    borderRadius: "4px",
-                  }}
-                >
-                  <option value="">-- Select Connector --</option>
-                  {connectors.map((conn) => (
-                    <option key={conn.id} value={conn.id}>
-                      {conn.icon} {conn.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            <button
-              onClick={() => setEdgeSource(selectedNode.id)}
-              style={{
-                padding: "8px",
-                borderRadius: "6px",
-                background: "rgba(245,158,11,0.15)",
-                color: "#fbbf24",
-                border: "1px solid rgba(245,158,11,0.4)",
-                cursor: "pointer",
-                fontSize: "12px",
-                fontWeight: 600,
-              }}
-            >
-              {edgeSource === selectedNode.id
-                ? "Click target node..."
-                : "+ Add Outgoing Edge"}
-            </button>
-
+            
             <button
               onClick={() => {
+                updateActiveWorkflow((wf) => ({
+                  ...wf,
+                  nodes: wf.nodes.filter((n) => n.id !== selectedNode.id),
+                  edges: wf.edges.filter((e) => e.from !== selectedNode.id && e.to !== selectedNode.id),
+                }));
                 setSelectedNodeId(null);
-                setSelectedEdgeId(null);
-                setWorkflows((prev) =>
-                  prev.map((wf) =>
-                    wf.id === activeWorkflowId
-                      ? {
-                          ...wf,
-                          nodes: wf.nodes.filter(
-                            (n) => n.id !== selectedNode.id,
-                          ),
-                          edges: wf.edges.filter(
-                            (e) =>
-                              e.from !== selectedNode.id &&
-                              e.to !== selectedNode.id,
-                          ),
-                        }
-                      : wf,
-                  ),
-                );
               }}
-              style={{
-                padding: "8px",
-                borderRadius: "6px",
-                background: "rgba(239,68,68,0.15)",
-                color: "#f87171",
-                border: "1px solid rgba(239,68,68,0.4)",
-                cursor: "pointer",
-                fontSize: "12px",
-                fontWeight: 600,
-                marginTop: "10px",
-              }}
+              style={{ padding: "8px", borderRadius: "6px", background: "rgba(239,68,68,0.15)", color: "#f87171", border: "1px solid rgba(239,68,68,0.4)", cursor: "pointer", fontSize: "12px", fontWeight: 600, marginTop: "10px" }}
             >
               Delete Node
             </button>
           </div>
         )}
-
         {selectedEdge && (
-          <div
-            style={{ display: "flex", flexDirection: "column", gap: "10px" }}
-          >
-            <div
-              style={{
-                padding: "10px",
-                borderRadius: "9px",
-                border: "1px solid var(--border-primary)",
-                background: "rgba(255,255,255,0.03)",
-                fontSize: "12px",
-              }}
-            >
-              <div style={{ color: "var(--text-muted)", marginBottom: "6px" }}>
-                Edge ID
-              </div>
-              <div style={{ color: "#cbd5e1", fontFamily: "var(--font-mono)" }}>
-                {selectedEdge.id}
-              </div>
-              <div
-                style={{
-                  color: "var(--text-muted)",
-                  marginTop: "8px",
-                  marginBottom: "6px",
-                }}
-              >
-                Transition
-              </div>
-              <div style={{ color: "#a5b4fc", fontSize: "11px" }}>
-                {activeWorkflow?.nodes.find((n) => n.id === selectedEdge.from)
-                  ?.label || selectedEdge.from}
-                <span style={{ margin: "0 5px" }}>→</span>
-                {activeWorkflow?.nodes.find((n) => n.id === selectedEdge.to)
-                  ?.label || selectedEdge.to}
-              </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            <div style={{ padding: "10px", borderRadius: "9px", border: "1px solid var(--border-primary)", background: "rgba(255,255,255,0.03)", fontSize: "12px" }}>
+              <div style={{ color: "var(--text-muted)", marginBottom: "6px" }}>Edge ID</div>
+              <div style={{ color: "#cbd5e1", fontFamily: "var(--font-mono)" }}>{selectedEdge.id}</div>
             </div>
-
-            <div
-              style={{
-                padding: "10px",
-                borderRadius: "9px",
-                border: "1px solid var(--border-primary)",
-                background: "rgba(255,255,255,0.03)",
-              }}
-            >
-              <div
-                style={{
-                  color: "var(--text-muted)",
-                  fontSize: "12px",
-                  marginBottom: "6px",
-                }}
-              >
-                Label (Short)
-              </div>
-              <input
-                type="text"
-                placeholder="e.g. Approved"
-                value={selectedEdge.label || ""}
-                onChange={(e) => updateSelectedEdge({ label: e.target.value })}
-                style={{
-                  width: "100%",
-                  background: "rgba(0,0,0,0.2)",
-                  border: "1px solid var(--border-primary)",
-                  color: "white",
-                  padding: "8px",
-                  borderRadius: "4px",
-                  outline: "none",
-                  fontSize: "12px",
-                }}
-              />
-            </div>
-
-            <div
-              style={{
-                padding: "10px",
-                borderRadius: "9px",
-                border: "1px solid var(--border-primary)",
-                background: "rgba(255,255,255,0.03)",
-              }}
-            >
-              <div
-                style={{
-                  color: "var(--text-muted)",
-                  fontSize: "12px",
-                  marginBottom: "6px",
-                }}
-              >
-                Description (Instructions)
-              </div>
-              <textarea
-                placeholder="Detailed context for the target node..."
-                value={selectedEdge.description || ""}
-                onChange={(e) =>
-                  updateSelectedEdge({ description: e.target.value })
-                }
-                style={{
-                  width: "100%",
-                  background: "rgba(0,0,0,0.2)",
-                  border: "1px solid var(--border-primary)",
-                  color: "white",
-                  padding: "8px",
-                  borderRadius: "4px",
-                  outline: "none",
-                  fontSize: "12px",
-                  minHeight: "100px",
-                  resize: "vertical",
-                }}
-              />
-            </div>
-
             <button
               onClick={() => {
-                setWorkflows((prev) =>
-                  prev.map((wf) =>
-                    wf.id === activeWorkflowId
-                      ? {
-                          ...wf,
-                          edges: wf.edges.filter(
-                            (e) => e.id !== selectedEdge.id,
-                          ),
-                        }
-                      : wf,
-                  ),
-                );
+                updateActiveWorkflow((wf) => ({ ...wf, edges: wf.edges.filter((e) => e.id !== selectedEdge.id) }));
                 setSelectedEdgeId(null);
               }}
-              style={{
-                padding: "8px",
-                borderRadius: "6px",
-                background: "rgba(239,68,68,0.15)",
-                color: "#f87171",
-                border: "1px solid rgba(239,68,68,0.4)",
-                cursor: "pointer",
-                fontSize: "12px",
-                fontWeight: 600,
-                marginTop: "10px",
-              }}
+              style={{ padding: "8px", borderRadius: "6px", background: "rgba(239,68,68,0.15)", color: "#f87171", border: "1px solid rgba(239,68,68,0.4)", cursor: "pointer", fontSize: "12px", fontWeight: 600, marginTop: "10px" }}
             >
               Delete Edge
             </button>
