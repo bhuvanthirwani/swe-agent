@@ -57,8 +57,9 @@ export default function WorkspaceViewer({
             } | null = null;
 
             try {
-                // @ts-expect-error optional peer dep
+                // Dynamic import for optional jszip dependency
                 const JSZip = (await import('jszip')).default;
+                // @ts-ignore — JSZip return type is broader than our local interface
                 zip = new JSZip();
             } catch {
                 zip = null;

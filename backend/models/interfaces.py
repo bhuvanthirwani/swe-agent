@@ -22,11 +22,17 @@ class AgentConfig(BaseModel):
     system_prompt: str
     llm: LLMConfig
     tools: List[ToolConfig] = []
+    output_schema: Optional[Dict[str, Any]] = None
 
 class AgentInput(BaseModel):
     task_id: int
     agent_id: int
     input_context: Dict[str, Any]
+    node_config: Optional[Dict[str, Any]] = None
+    session_id: Optional[str] = None
+    tools_override: Optional[List[str]] = None
+    model_override: Optional[str] = None
+    memory_config: Optional[Dict[str, Any]] = None
 
 class AgentOutput(BaseModel):
     status: str = "success"

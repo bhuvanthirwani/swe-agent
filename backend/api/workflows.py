@@ -1,11 +1,15 @@
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from typing import List, Optional, Any, Dict
 from datetime import datetime
+from backend.models.schemas import DAGNodeSchema, DAGEdgeSchema
 import sqlite3
 import uuid
 import json
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -97,12 +101,40 @@ def get_workflow(workflow_id: str, db: sqlite3.Connection = Depends(get_db)):
         updated_at=row["updated_at"]
     )
 
+def _validate_nodes_edges(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]):
+    """Validate nodes and edges through Pydantic schemas.
+    Returns (validated_nodes, validated_edges) as plain dicts for JSON storage.
+    Logs warnings for validation issues but does not block saves."""
+    validated_nodes = []
+    for raw_node in nodes:
+        try:
+            parsed = DAGNodeSchema.model_validate(raw_node)
+            validated_nodes.append(raw_node)  # Keep original dict to preserve unknown fields
+        except ValidationError as e:
+            logger.warning(f"Node validation warning for '{raw_node.get('id', '?')}': {e}")
+            validated_nodes.append(raw_node)  # Still accept it — graceful degradation
+
+    validated_edges = []
+    for raw_edge in edges:
+        try:
+            parsed = DAGEdgeSchema.model_validate(raw_edge)
+            validated_edges.append(raw_edge)
+        except ValidationError as e:
+            logger.warning(f"Edge validation warning for '{raw_edge.get('id', '?')}': {e}")
+            validated_edges.append(raw_edge)
+
+    return validated_nodes, validated_edges
+
+
 @router.post("/workflows", response_model=WorkflowResponse)
 def create_workflow(workflow: WorkflowCreate, db: sqlite3.Connection = Depends(get_db)):
     workflow_id = str(uuid.uuid4())
     cursor = db.cursor()
     
     now = datetime.utcnow().isoformat() + "Z"
+    
+    # Validate nodes and edges through DAG schemas
+    validated_nodes, validated_edges = _validate_nodes_edges(workflow.nodes, workflow.edges)
     
     cursor.execute(
         """INSERT INTO workflows 
@@ -115,8 +147,8 @@ def create_workflow(workflow: WorkflowCreate, db: sqlite3.Connection = Depends(g
             workflow.version,
             workflow.entry_node_id,
             workflow.cron_schedule,
-            json.dumps(workflow.nodes),
-            json.dumps(workflow.edges),
+            json.dumps(validated_nodes),
+            json.dumps(validated_edges),
             now,
             now
         )
@@ -155,11 +187,13 @@ def update_workflow(workflow_id: str, workflow_update: WorkflowUpdate, db: sqlit
         updates.append("cron_schedule = ?")
         params.append(workflow_update.cron_schedule if workflow_update.cron_schedule else None)
     if workflow_update.nodes is not None:
+        validated_nodes, _ = _validate_nodes_edges(workflow_update.nodes, [])
         updates.append("nodes_json = ?")
-        params.append(json.dumps(workflow_update.nodes))
+        params.append(json.dumps(validated_nodes))
     if workflow_update.edges is not None:
+        _, validated_edges = _validate_nodes_edges([], workflow_update.edges)
         updates.append("edges_json = ?")
-        params.append(json.dumps(workflow_update.edges))
+        params.append(json.dumps(validated_edges))
         
     updates.append("updated_at = ?")
     params.append(now)

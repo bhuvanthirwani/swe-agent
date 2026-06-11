@@ -1,5 +1,6 @@
 import json
 import asyncio
+import uuid
 from typing import List, Dict, Any
 from backend.core.agent_runtime import UniversalAgentRuntime
 from backend.models.interfaces import AgentInput
@@ -28,7 +29,9 @@ class DAGOrchestrator:
             
         conn.commit()
 
-    async def execute(self, initial_context: Dict[str, Any] = None):
+    async def execute(self, initial_context: Dict[str, Any] = None, session_id: str = None):
+        if not session_id:
+            session_id = str(uuid.uuid4())
         conn = get_db_connection()
         try:
             self._ensure_schema(conn)
@@ -151,7 +154,13 @@ class DAGOrchestrator:
                     conn.commit()
                     
                     runtime = UniversalAgentRuntime(agent_id=agent_id)
-                    input_data = AgentInput(task_id=self.task_id, agent_id=agent_id, input_context=merged_context)
+                    input_data = AgentInput(
+                        task_id=self.task_id, 
+                        agent_id=agent_id, 
+                        input_context=merged_context,
+                        node_config=node_config,
+                        session_id=session_id
+                    )
                     result = await runtime.execute(input_data)
                     
                     cursor.execute(

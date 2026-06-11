@@ -62,3 +62,96 @@ class SecurityOutputSchema(BaseModel):
     summary: str
     owasp_categories: Optional[List[str]] = None
 
+
+# ─── DAG Workflow Schemas (Visual Editor) ─────────────────────
+
+class DAGPortSchema(BaseModel):
+    """Schema for a connection port on a workflow node."""
+    id: str
+    label: str
+    direction: str  # "input" | "output"
+    kind: str       # "control" | "data" | "model" | "tool" | "memory" | "rag" | "guardrail" | "vector" | "connector" | "error"
+    position: Optional[str] = None  # "left" | "right" | "top" | "bottom"
+    accepts: Optional[List[str]] = None
+    required: Optional[bool] = None
+    maxConnections: Optional[int] = None
+    description: Optional[str] = None
+
+
+class NodeConfigSchema(BaseModel):
+    """Flexible config for component nodes (model, tool, memory, rag, guardrail).
+    Uses extra='allow' so unknown fields are preserved for extensibility."""
+    provider: Optional[str] = None
+    modelName: Optional[str] = None
+    temperature: Optional[float] = None
+    maxTokens: Optional[int] = None
+    toolName: Optional[str] = None
+    description: Optional[str] = None
+    scope: Optional[str] = None
+    filePath: Optional[str] = None
+    collectionName: Optional[str] = None
+    topK: Optional[int] = None
+    scoreThreshold: Optional[float] = None
+    queryMode: Optional[str] = None
+    policies: Optional[List[str]] = None
+    phase: Optional[str] = None
+    action: Optional[str] = None
+    allowRetry: Optional[bool] = None
+    maxSummaryTokens: Optional[int] = None
+    importanceThreshold: Optional[float] = None
+    allowWrites: Optional[bool] = None
+    allowAgentWrites: Optional[bool] = None
+    persistDirectory: Optional[str] = None
+    ingestAgentOutputs: Optional[bool] = None
+    clearOnRunStart: Optional[bool] = None
+    writable: Optional[bool] = None
+    updateOnComplete: Optional[bool] = None
+    updateOnFailure: Optional[bool] = None
+
+    class Config:
+        extra = "allow"
+
+
+class DAGNodeSchema(BaseModel):
+    """Schema for a node in the workflow DAG, used for backend validation."""
+    id: str
+    type: str
+    label: str
+    x: float
+    y: float
+    agentName: Optional[str] = None
+    description: Optional[str] = None
+    ports: Optional[List[DAGPortSchema]] = None
+    chatModel: Optional[str] = None
+    memory: Optional[str] = None
+    memoryConfig: Optional[str] = None
+    tools: Optional[List[str]] = None
+    useCompaction: Optional[bool] = None
+    compactionStrategy: Optional[str] = None  # "off" | "auto" | "aggressive" | "memory_first" | "rag_first"
+    maxContextTokens: Optional[int] = None
+    config: Optional[NodeConfigSchema] = None
+    connectorId: Optional[str] = None
+    condition: Optional[Dict[str, Any]] = None
+    parallelBranches: Optional[List[List[str]]] = None
+    checkpointConfig: Optional[Dict[str, Any]] = None
+
+    class Config:
+        extra = "allow"
+
+
+class DAGEdgeSchema(BaseModel):
+    """Schema for an edge in the workflow DAG."""
+    id: str
+    from_node: str = Field(alias="from")
+    to_node: str = Field(alias="to")
+    sourceHandle: Optional[str] = None
+    targetHandle: Optional[str] = None
+    edgeType: Optional[str] = None  # "control" | "data" | "model" | "tool" | "memory" | "rag" | "guardrail" | "vector" | "error"
+    label: Optional[str] = None
+    description: Optional[str] = None
+    condition: Optional[str] = None
+    mapping: Optional[Dict[str, str]] = None
+
+    class Config:
+        populate_by_name = True
+

@@ -9,3 +9,4 @@ mistralai
 openai
 anthropic
 groq
+jsonschema

@@ -8,6 +8,7 @@ import {
   DAGPortKind,
   DAGPortPosition,
   DAGWorkflow,
+  RESOURCE_EDGE_TYPES,
 } from "@/lib/flows/dagExecutor";
 import { AGENT_CONFIGS, AgentName } from "@/lib/types";
 import { Connector, fetchConnectors } from "@/lib/connectors";
@@ -60,6 +61,58 @@ const MODEL_OPTIONS = ["llama-3.3-70b", "qwen/qwen3-32b", "llama-3.1-8b-instant"
 const MEMORY_OPTIONS = ["Buffer Memory", "Summary Memory", "Hippocampus Memory"];
 const RAG_OPTIONS = ["Chroma DB", "Workflow Knowledge Base", "Project Docs"];
 const GUARDRAIL_OPTIONS = ["PII/Secrets", "Prompt Injection", "Schema Validation", "Security Review"];
+
+const EDGE_COLORS: Record<string, string> = {
+  control: "rgba(148,163,184,0.45)",
+  data: "#60a5fa",
+  context: "#a78bfa",
+  model: "#818cf8",
+  tool: "#10b981",
+  memory: "#f59e0b",
+  rag: "#38bdf8",
+  guardrail: "#f43f5e",
+  vector: "#22d3ee",
+  vector_write: "#22d3ee",
+  connector: "#d946ef",
+  error: "#ef4444",
+};
+
+const PORT_ICONS: Record<string, string> = {
+  model: "🧠",
+  tool: "🛠️",
+  memory: "📝",
+  rag: "🔎",
+  guardrail: "🛡️",
+  vector: "🧲",
+  connector: "🔌",
+};
+
+interface PopupOption {
+  label: string;
+  nodeType: DAGNodeType;
+  configKey?: string;
+  configValue?: string;
+}
+
+function getPopupOptions(kind: DAGPortKind): PopupOption[] {
+  switch (kind) {
+    case "tool":
+      return TOOL_OPTIONS.map((t) => ({ label: t, nodeType: "tool" as DAGNodeType, configKey: "toolName", configValue: t }));
+    case "model":
+      return MODEL_OPTIONS.map((m) => ({ label: m, nodeType: "model" as DAGNodeType, configKey: "modelName", configValue: m }));
+    case "memory":
+      return MEMORY_OPTIONS.map((m) => ({
+        label: m,
+        nodeType: (m === "Buffer Memory" ? "buffer_memory" : m === "Summary Memory" ? "summary_memory" : "hippocampus_memory") as DAGNodeType,
+      }));
+    case "rag":
+      return RAG_OPTIONS.map((r) => ({ label: r, nodeType: "rag" as DAGNodeType, configKey: "collectionName", configValue: r }));
+    case "guardrail":
+      return GUARDRAIL_OPTIONS.map((g) => ({ label: g, nodeType: "guardrail" as DAGNodeType, configKey: "policies", configValue: g }));
+    default:
+      return [];
+  }
+}
 
 function labelForType(type: DAGNodeType): string {
   const labels: Record<DAGNodeType, string> = {
@@ -585,6 +638,48 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
     if (connectionDraft) setConnectionDraft(null);
   };
 
+  const handleQuickAdd = (parentNode: DAGNode, port: DAGPort, option: PopupOption) => {
+    if (!activeWorkflow) return;
+    const newNode: DAGNode = {
+      id: `n-${Date.now().toString(36)}`,
+      type: option.nodeType,
+      label: option.label,
+      x: parentNode.x + (getPortsOnSide(parentNode, "bottom").indexOf(port)) * 60 - 40,
+      y: parentNode.y + NODE_HEIGHT + 90,
+      config: option.configKey
+        ? { ...defaultConfigForType(option.nodeType), [option.configKey]: option.configValue }
+        : defaultConfigForType(option.nodeType),
+    };
+
+    const newNodePorts = getDefaultPorts(newNode);
+    const outputPort = newNodePorts.find((p) => p.direction === "output" && p.kind === port.kind);
+
+    const newEdge: DAGEdge = {
+      id: `e-${Date.now().toString(36)}`,
+      from: newNode.id,
+      to: parentNode.id,
+      sourceHandle: outputPort?.id,
+      targetHandle: port.id,
+      edgeType: outputPort ? inferEdgeType(outputPort, port) : (port.kind as DAGEdgeType),
+    };
+
+    updateActiveWorkflow((wf) => ({
+      ...wf,
+      nodes: [...wf.nodes, newNode],
+      edges: [...wf.edges, newEdge],
+    }));
+    setActiveMenu(null);
+    setSelectedNodeId(newNode.id);
+    setSelectedEdgeId(null);
+  };
+
+  const handleDisconnectPort = (edgeId: string) => {
+    updateActiveWorkflow((wf) => ({
+      ...wf,
+      edges: wf.edges.filter((e) => e.id !== edgeId),
+    }));
+  };
+
   const renderEdges = () => {
     if (!activeWorkflow) return null;
     return (
@@ -624,6 +719,10 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
 
           const path = pathForEdge(start, end, zoom);
           const isEdgeSelected = edge.id === selectedEdgeId;
+          const isResourceEdge = RESOURCE_EDGE_TYPES.includes(edge.edgeType as DAGEdgeType);
+          const edgeColor = isEdgeSelected
+            ? "#6366f1"
+            : EDGE_COLORS[edge.edgeType ?? "control"] ?? "rgba(148,163,184,0.45)";
 
           return (
             <g
@@ -640,11 +739,12 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
               <path
                 d={path}
                 fill="none"
-                stroke={isEdgeSelected ? "#6366f1" : "rgba(148,163,184,0.45)"}
+                stroke={edgeColor}
                 strokeWidth={isEdgeSelected ? 3 : 2}
+                strokeDasharray={isResourceEdge && !isEdgeSelected ? "6 3" : "none"}
                 markerEnd={isEdgeSelected ? "url(#ve-arrow-selected)" : "url(#ve-arrow)"}
               />
-              <circle cx={end.x} cy={end.y} r={4 * zoom} fill={isEdgeSelected ? "#6366f1" : "#94a3b8"} />
+              <circle cx={end.x} cy={end.y} r={4 * zoom} fill={isEdgeSelected ? "#6366f1" : edgeColor} />
             </g>
           );
         })}
@@ -670,22 +770,29 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
       const isOutput = port.direction === "output";
 
       if (isBottomResource) {
-        // Draw the bottom handle block
         const center = getPortCenter(node, port, zoom);
-        // Translate to relative coords inside node container
         const left = center.x / zoom - node.x;
         const top = center.y / zoom - node.y;
 
-        const isHovered = activeMenu?.nodeId === node.id && activeMenu.portId === port.id;
+        const isMenuOpen = activeMenu?.nodeId === node.id && activeMenu.portId === port.id;
         const iconColor =
-          port.kind === "tool" ? "#10b981" : port.kind === "memory" ? "#f59e0b" : port.kind === "model" ? "#818cf8" : "#38bdf8";
+          port.kind === "tool" ? "#10b981" : port.kind === "memory" ? "#f59e0b" : port.kind === "model" ? "#818cf8" : port.kind === "guardrail" ? "#f43f5e" : "#38bdf8";
+
+        // Check how many edges are connected to this port
+        const connectedEdges = activeWorkflow?.edges.filter(
+          (e) => (e.to === node.id && e.targetHandle === port.id) || (e.from === node.id && e.sourceHandle === port.id),
+        ) ?? [];
+        const isConnected = connectedEdges.length > 0;
+        const displayIcon = isConnected ? "●" : (PORT_ICONS[port.kind] || "+");
+
+        const popupOptions = getPopupOptions(port.kind);
 
         return (
           <div
             key={port.id}
             onClick={(e) => {
               e.stopPropagation();
-              setActiveMenu(isHovered ? null : { nodeId: node.id, portId: port.id });
+              setActiveMenu(isMenuOpen ? null : { nodeId: node.id, portId: port.id });
             }}
             onMouseUp={(e) => isInput && completeConnection(e, node, port)}
             style={{
@@ -694,80 +801,191 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
               top: `${top - RESOURCE_BOX_SIZE / 2}px`,
               width: `${RESOURCE_BOX_SIZE}px`,
               height: `${RESOURCE_BOX_SIZE}px`,
-              borderRadius: "4px",
-              background: "rgba(15,23,42,0.95)",
-              border: `1px solid ${iconColor}`,
+              borderRadius: "5px",
+              background: isConnected ? `${iconColor}20` : "rgba(15,23,42,0.95)",
+              border: `1.5px solid ${iconColor}`,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               cursor: "pointer",
               color: iconColor,
-              fontSize: "12px",
+              fontSize: isConnected ? "10px" : "11px",
               boxShadow: `0 0 8px ${iconColor}44`,
               zIndex: 30,
+              transition: "all 0.15s ease",
             }}
           >
-            +
+            {displayIcon}
+            {/* Vertical connector line up to the node */}
             <div
               style={{
                 position: "absolute",
                 top: "-18px",
                 width: "2px",
                 height: "16px",
-                background: "rgba(148,163,184,0.3)",
+                background: isConnected ? iconColor : "rgba(148,163,184,0.3)",
                 pointerEvents: "none",
+                transition: "background 0.2s",
               }}
             />
+            {/* Port label */}
             <span
               style={{
                 position: "absolute",
-                top: "24px",
-                fontSize: "9px",
-                color: "#94a3b8",
+                top: "26px",
+                fontSize: "8px",
+                color: isConnected ? iconColor : "#94a3b8",
                 whiteSpace: "nowrap",
                 pointerEvents: "none",
+                fontWeight: isConnected ? 600 : 400,
+                letterSpacing: "0.03em",
               }}
             >
-              {port.label}
+              {port.label}{isConnected ? ` (${connectedEdges.length})` : ""}
             </span>
 
-            {/* Popup Menu */}
-            {isHovered && (
+            {/* Connection count badge */}
+            {isConnected && (
               <div
                 style={{
                   position: "absolute",
-                  top: "35px",
+                  top: "-6px",
+                  right: "-6px",
+                  width: "14px",
+                  height: "14px",
+                  borderRadius: "50%",
+                  background: iconColor,
+                  color: "#0f172a",
+                  fontSize: "8px",
+                  fontWeight: 700,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  pointerEvents: "none",
+                }}
+              >
+                {connectedEdges.length}
+              </div>
+            )}
+
+            {/* Popup Quick-Add Menu */}
+            {isMenuOpen && (
+              <div
+                style={{
+                  position: "absolute",
+                  top: "38px",
                   left: "50%",
                   transform: "translateX(-50%)",
-                  background: "#1e293b",
+                  background: "linear-gradient(135deg, #1e293b, #0f172a)",
                   border: "1px solid #334155",
-                  borderRadius: "8px",
-                  padding: "8px",
-                  width: "140px",
+                  borderRadius: "10px",
+                  padding: "10px",
+                  width: "180px",
                   zIndex: 50,
                   display: "flex",
                   flexDirection: "column",
-                  gap: "6px",
-                  boxShadow: "0 10px 25px rgba(0,0,0,0.5)",
+                  gap: "4px",
+                  boxShadow: "0 12px 32px rgba(0,0,0,0.6)",
                 }}
                 onClick={(e) => e.stopPropagation()}
               >
-                <div style={{ fontSize: "10px", color: "#cbd5e1", fontWeight: "bold", marginBottom: "4px" }}>
-                  Configure {port.label}
+                <div style={{ fontSize: "10px", color: iconColor, fontWeight: 700, marginBottom: "4px", letterSpacing: "0.05em", textTransform: "uppercase" }}>
+                  Add {port.label}
                 </div>
-                <div style={{ fontSize: "11px", color: "#94a3b8" }}>
-                  Please use Node Inspector to configure this connection, or drag an edge to a node.
-                </div>
+
+                {/* Available options */}
+                {popupOptions.map((opt) => (
+                  <button
+                    key={opt.label}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleQuickAdd(node, port, opt);
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      padding: "6px 8px",
+                      borderRadius: "6px",
+                      border: "none",
+                      background: "rgba(255,255,255,0.04)",
+                      color: "#e2e8f0",
+                      fontSize: "11px",
+                      cursor: "pointer",
+                      textAlign: "left",
+                      transition: "background 0.12s",
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = `${iconColor}22`)}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.04)")}
+                  >
+                    <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: iconColor, flexShrink: 0 }} />
+                    {opt.label}
+                  </button>
+                ))}
+
+                {/* Connected items with disconnect */}
+                {connectedEdges.length > 0 && (
+                  <>
+                    <div style={{ height: "1px", background: "#334155", margin: "4px 0" }} />
+                    <div style={{ fontSize: "9px", color: "#64748b", textTransform: "uppercase", letterSpacing: "0.08em" }}>Connected</div>
+                    {connectedEdges.map((ce) => {
+                      const connectedNode = activeWorkflow?.nodes.find(
+                        (n) => (ce.to === node.id ? n.id === ce.from : n.id === ce.to),
+                      );
+                      return (
+                        <div
+                          key={ce.id}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            padding: "4px 6px",
+                            borderRadius: "5px",
+                            background: `${iconColor}12`,
+                            fontSize: "10px",
+                            color: "#cbd5e1",
+                          }}
+                        >
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "110px" }}>
+                            {connectedNode?.label ?? ce.id}
+                          </span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDisconnectPort(ce.id);
+                            }}
+                            style={{
+                              background: "none",
+                              border: "none",
+                              color: "#ef4444",
+                              cursor: "pointer",
+                              fontSize: "12px",
+                              padding: "0 2px",
+                              lineHeight: 1,
+                            }}
+                            title="Disconnect"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
               </div>
             )}
           </div>
         );
       }
 
-      // Draw standard side handle
+      // Draw standard side handle (left/right circles)
       const center = getPortCenter(node, port, zoom);
       const left = center.x / zoom - node.x;
       const top = center.y / zoom - node.y;
+
+      const handleColor = port.direction === "output"
+        ? EDGE_COLORS[port.kind] ?? "#10b981"
+        : "#94a3b8";
 
       return (
         <div
@@ -781,12 +999,15 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
             width: `${HANDLE_SIZE}px`,
             height: `${HANDLE_SIZE}px`,
             borderRadius: "50%",
-            background: port.direction === "output" ? "#10b981" : "#94a3b8",
+            background: handleColor,
             border: "2px solid #0f172a",
             cursor: port.direction === "output" ? "crosshair" : "default",
             zIndex: 25,
+            transition: "transform 0.12s",
           }}
-          title={port.label}
+          title={`${port.label} (${port.kind})`}
+          onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.3)")}
+          onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
         />
       );
     });
@@ -1003,9 +1224,256 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
         )}
         {selectedNode && (
           <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-            <div style={{ padding: "12px", borderRadius: "10px", border: "1px solid rgba(99,102,241,0.3)", background: "rgba(99,102,241,0.1)" }}>
+            {/* Header */}
+            <div style={{ padding: "12px", borderRadius: "10px", border: `1px solid ${getNodeColor(selectedNode.type, selectedNode.agentName)}44`, background: `${getNodeColor(selectedNode.type, selectedNode.agentName)}11` }}>
               <input type="text" value={selectedNode.label} onChange={(e) => updateSelectedNode({ label: e.target.value })} style={{ width: "100%", background: "transparent", border: "none", color: "#e0e7ff", fontWeight: 700, fontSize: "13px", outline: "none" }} />
-              <div style={{ color: "#a5b4fc", fontSize: "11px", marginTop: "4px" }}>{labelForType(selectedNode.type)}</div>
+              <div style={{ color: getNodeColor(selectedNode.type, selectedNode.agentName), fontSize: "11px", marginTop: "4px" }}>{labelForType(selectedNode.type)}</div>
+              <div style={{ color: "#64748b", fontSize: "10px", fontFamily: "var(--font-mono)", marginTop: "2px" }}>{selectedNode.id}</div>
+            </div>
+
+            {/* Agent-specific fields */}
+            {selectedNode.type === "agent" && (
+              <div style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--border-primary)", background: "rgba(255,255,255,0.03)", display: "flex", flexDirection: "column", gap: "8px" }}>
+                <div style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Agent Config</div>
+                <div>
+                  <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Agent Name</div>
+                  <select
+                    value={selectedNode.agentName ?? ""}
+                    onChange={(e) => updateSelectedNode({ agentName: (e.target.value || undefined) as AgentName | undefined })}
+                    style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px" }}
+                  >
+                    <option value="">Select agent...</option>
+                    {Object.keys(AGENT_CONFIGS).map((name) => (
+                      <option key={name} value={name}>{AGENT_CONFIGS[name as AgentName]?.displayName ?? name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Compaction</div>
+                  <select
+                    value={selectedNode.compactionStrategy ?? "auto"}
+                    onChange={(e) => updateSelectedNode({ compactionStrategy: e.target.value as DAGNode["compactionStrategy"] })}
+                    style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px" }}
+                  >
+                    <option value="off">Off</option>
+                    <option value="auto">Auto</option>
+                    <option value="aggressive">Aggressive</option>
+                    <option value="memory_first">Memory First</option>
+                    <option value="rag_first">RAG First</option>
+                  </select>
+                </div>
+                <div>
+                  <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Max Context Tokens</div>
+                  <input
+                    type="number"
+                    value={selectedNode.maxContextTokens ?? 12000}
+                    onChange={(e) => updateSelectedNode({ maxContextTokens: parseInt(e.target.value) || 12000 })}
+                    style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px" }}
+                  />
+                </div>
+                {/* Connected resources summary */}
+                {(() => {
+                  const agentEdges = activeWorkflow?.edges.filter((e) => e.to === selectedNode.id && RESOURCE_EDGE_TYPES.includes(e.edgeType as DAGEdgeType)) ?? [];
+                  if (agentEdges.length === 0) return null;
+                  return (
+                    <div style={{ marginTop: "4px" }}>
+                      <div style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "6px" }}>Connected Resources</div>
+                      {agentEdges.map((ae) => {
+                        const resourceNode = activeWorkflow?.nodes.find((n) => n.id === ae.from);
+                        const color = EDGE_COLORS[ae.edgeType ?? "control"] ?? "#94a3b8";
+                        return (
+                          <div key={ae.id} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "3px 0", fontSize: "11px" }}>
+                            <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: color, flexShrink: 0 }} />
+                            <span style={{ color: "#cbd5e1" }}>{resourceNode?.label ?? ae.from}</span>
+                            <span style={{ color: "#64748b", fontSize: "9px" }}>{ae.edgeType}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* Model node config */}
+            {selectedNode.type === "model" && (
+              <div style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--border-primary)", background: "rgba(255,255,255,0.03)", display: "flex", flexDirection: "column", gap: "8px" }}>
+                <div style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Model Config</div>
+                <div>
+                  <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Provider</div>
+                  <input value={configString(selectedNode, "provider", "groq")} onChange={(e) => updateSelectedNodeConfig("provider", e.target.value)} style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px" }} />
+                </div>
+                <div>
+                  <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Model Name</div>
+                  <select value={configString(selectedNode, "modelName", "")} onChange={(e) => updateSelectedNodeConfig("modelName", e.target.value)} style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px" }}>
+                    <option value="">Select model...</option>
+                    {MODEL_OPTIONS.map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                  <div>
+                    <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Temperature</div>
+                    <input type="number" step="0.1" min="0" max="2" value={configNumber(selectedNode, "temperature", 0.3)} onChange={(e) => updateSelectedNodeConfig("temperature", parseFloat(e.target.value))} style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px" }} />
+                  </div>
+                  <div>
+                    <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Max Tokens</div>
+                    <input type="number" value={configNumber(selectedNode, "maxTokens", 4096)} onChange={(e) => updateSelectedNodeConfig("maxTokens", parseInt(e.target.value))} style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px" }} />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Tool node config */}
+            {selectedNode.type === "tool" && (
+              <div style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--border-primary)", background: "rgba(255,255,255,0.03)", display: "flex", flexDirection: "column", gap: "8px" }}>
+                <div style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Tool Config</div>
+                <div>
+                  <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Tool Name</div>
+                  <select value={configString(selectedNode, "toolName", "")} onChange={(e) => { updateSelectedNodeConfig("toolName", e.target.value); updateSelectedNode({ label: e.target.value }); }} style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px" }}>
+                    <option value="">Select tool...</option>
+                    {TOOL_OPTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Description</div>
+                  <textarea value={configString(selectedNode, "description", "")} onChange={(e) => updateSelectedNodeConfig("description", e.target.value)} style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px", minHeight: "50px", resize: "vertical" }} />
+                </div>
+              </div>
+            )}
+
+            {/* Memory node configs */}
+            {(selectedNode.type === "buffer_memory" || selectedNode.type === "summary_memory" || selectedNode.type === "hippocampus_memory") && (
+              <div style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--border-primary)", background: "rgba(255,255,255,0.03)", display: "flex", flexDirection: "column", gap: "8px" }}>
+                <div style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Memory Config</div>
+                <div>
+                  <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Scope</div>
+                  <select value={configString(selectedNode, "scope", "session")} onChange={(e) => updateSelectedNodeConfig("scope", e.target.value)} style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px" }}>
+                    <option value="session">Session</option>
+                    <option value="workflow">Workflow</option>
+                    <option value="project">Project</option>
+                  </select>
+                </div>
+                <div>
+                  <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>File Path</div>
+                  <input value={configString(selectedNode, "filePath", "")} onChange={(e) => updateSelectedNodeConfig("filePath", e.target.value)} style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px", fontFamily: "var(--font-mono)" }} />
+                </div>
+                {selectedNode.type === "buffer_memory" && (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                    <div>
+                      <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Max Tokens</div>
+                      <input type="number" value={configNumber(selectedNode, "maxTokens", 2500)} onChange={(e) => updateSelectedNodeConfig("maxTokens", parseInt(e.target.value))} style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px" }} />
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px", paddingTop: "18px" }}>
+                      <input type="checkbox" checked={!!selectedNode.config?.clearOnRunStart} onChange={(e) => updateSelectedNodeConfig("clearOnRunStart", e.target.checked)} />
+                      <span style={{ color: "#94a3b8", fontSize: "11px" }}>Clear on start</span>
+                    </div>
+                  </div>
+                )}
+                {selectedNode.type === "summary_memory" && (
+                  <div>
+                    <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Max Summary Tokens</div>
+                    <input type="number" value={configNumber(selectedNode, "maxSummaryTokens", 2000)} onChange={(e) => updateSelectedNodeConfig("maxSummaryTokens", parseInt(e.target.value))} style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px" }} />
+                  </div>
+                )}
+                {selectedNode.type === "hippocampus_memory" && (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                    <div>
+                      <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Top K</div>
+                      <input type="number" value={configNumber(selectedNode, "topK", 8)} onChange={(e) => updateSelectedNodeConfig("topK", parseInt(e.target.value))} style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px" }} />
+                    </div>
+                    <div>
+                      <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Importance</div>
+                      <input type="number" step="0.05" min="0" max="1" value={configNumber(selectedNode, "importanceThreshold", 0.75)} onChange={(e) => updateSelectedNodeConfig("importanceThreshold", parseFloat(e.target.value))} style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px" }} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* RAG node config */}
+            {selectedNode.type === "rag" && (
+              <div style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--border-primary)", background: "rgba(255,255,255,0.03)", display: "flex", flexDirection: "column", gap: "8px" }}>
+                <div style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>RAG Config</div>
+                <div>
+                  <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Collection</div>
+                  <select value={configString(selectedNode, "collectionName", "")} onChange={(e) => updateSelectedNodeConfig("collectionName", e.target.value)} style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px" }}>
+                    <option value="">Select collection...</option>
+                    {RAG_OPTIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                  <div>
+                    <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Top K</div>
+                    <input type="number" value={configNumber(selectedNode, "topK", 5)} onChange={(e) => updateSelectedNodeConfig("topK", parseInt(e.target.value))} style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px" }} />
+                  </div>
+                  <div>
+                    <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Score Threshold</div>
+                    <input type="number" step="0.05" min="0" max="1" value={configNumber(selectedNode, "scoreThreshold", 0.35)} onChange={(e) => updateSelectedNodeConfig("scoreThreshold", parseFloat(e.target.value))} style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px" }} />
+                  </div>
+                </div>
+                <div>
+                  <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Query Mode</div>
+                  <select value={configString(selectedNode, "queryMode", "combined")} onChange={(e) => updateSelectedNodeConfig("queryMode", e.target.value)} style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px" }}>
+                    <option value="combined">Combined</option>
+                    <option value="semantic">Semantic</option>
+                    <option value="keyword">Keyword</option>
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {/* Guardrail node config */}
+            {selectedNode.type === "guardrail" && (
+              <div style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--border-primary)", background: "rgba(255,255,255,0.03)", display: "flex", flexDirection: "column", gap: "8px" }}>
+                <div style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Guardrail Config</div>
+                <div>
+                  <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Phase</div>
+                  <select value={configString(selectedNode, "phase", "both")} onChange={(e) => updateSelectedNodeConfig("phase", e.target.value)} style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px" }}>
+                    <option value="input">Input</option>
+                    <option value="output">Output</option>
+                    <option value="both">Both</option>
+                  </select>
+                </div>
+                <div>
+                  <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Policies</div>
+                  {GUARDRAIL_OPTIONS.map((pol) => {
+                    const currentPolicies: string[] = (selectedNode.config?.policies as string[]) ?? [];
+                    const isChecked = currentPolicies.includes(pol);
+                    return (
+                      <label key={pol} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "2px 0", fontSize: "11px", color: "#cbd5e1", cursor: "pointer" }}>
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => {
+                            const updated = isChecked ? currentPolicies.filter((p) => p !== pol) : [...currentPolicies, pol];
+                            updateSelectedNodeConfig("policies", updated);
+                          }}
+                        />
+                        {pol}
+                      </label>
+                    );
+                  })}
+                </div>
+                <div>
+                  <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Action</div>
+                  <select value={configString(selectedNode, "action", "warn")} onChange={(e) => updateSelectedNodeConfig("action", e.target.value)} style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px" }}>
+                    <option value="warn">Warn</option>
+                    <option value="block">Block</option>
+                    <option value="flag">Flag</option>
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {/* Description field for all nodes */}
+            <div style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--border-primary)", background: "rgba(255,255,255,0.03)" }}>
+              <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Description</div>
+              <textarea
+                value={selectedNode.description ?? ""}
+                onChange={(e) => updateSelectedNode({ description: e.target.value })}
+                placeholder="Optional node description..."
+                style={{ width: "100%", background: "rgba(0,0,0,0.2)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px", minHeight: "40px", resize: "vertical", outline: "none" }}
+              />
             </div>
             
             <button

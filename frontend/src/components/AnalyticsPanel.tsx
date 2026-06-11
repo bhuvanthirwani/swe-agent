@@ -24,7 +24,7 @@ function computeAnalytics(agentResults: Record<string, AgentResult>): PipelineAn
             agentName,
             tokens,
             latencyMs,
-            costUsd: (tokens / 1000000) * 0.15
+            cost: (tokens / 1000000) * 0.15
         });
     }
 
