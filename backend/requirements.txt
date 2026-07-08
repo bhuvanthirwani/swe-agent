@@ -10,3 +10,5 @@ openai
 anthropic
 groq
 jsonschema
+Jinja2
+websockets

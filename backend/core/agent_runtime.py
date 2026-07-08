@@ -12,6 +12,11 @@ try:
 except ImportError:
     jsonschema = None
 
+try:
+    from jinja2 import Template
+except ImportError:
+    Template = None
+
 # Base directory for all memory files
 MEMORY_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 
@@ -226,9 +231,46 @@ class UniversalAgentRuntime:
             base_url=self.config.llm.base_url
         )
 
-        # ─── 2. Memory Injection (into System Prompt) ────────
         system_prompt = self.config.system_prompt
-        memory_type = node_config.get("memory")
+        
+        # ─── 0. Jinja Templating ─────────────────────────────
+        if input_data.dynamic_inputs and Template:
+            try:
+                template = Template(system_prompt)
+                system_prompt = template.render(**input_data.dynamic_inputs)
+            except Exception as e:
+                print(f"[Agent Runtime] Jinja templating failed: {e}")
+        
+        # ─── 1.5 Global Graph & Dynamic I/O Injection ────────
+        if input_data.global_graph:
+            system_prompt += f"\n\n## Workflow Architecture\nHere is the full architecture of the workflow you are part of:\n```json\n{json.dumps(input_data.global_graph, indent=2)}\n```\n"
+            
+        global_state = input_data.input_context.get("global_state", {})
+        if global_state:
+            system_prompt += f"\n\n## Global Workflow State\n```json\n{json.dumps(global_state, indent=2)}\n```\n"
+            
+        if node_config.get("canWriteGlobalState"):
+            system_prompt += "\n## Global State Writing\nYou are authorized to write to the global state. To do so, include a `_global_state_updates` object in your JSON output. Any key-value pairs inside it will be merged into the global state.\n"
+            if not custom_outputs:
+                 custom_outputs = ["_global_state_updates"]
+            elif "_global_state_updates" not in custom_outputs:
+                 custom_outputs.append("_global_state_updates")
+
+        system_prompt += f"\nYou are currently executing as Node `{agent_name}`.\n"
+        
+        if input_data.dynamic_inputs:
+            system_prompt += f"You are receiving the following dynamic inputs: {list(input_data.dynamic_inputs.keys())}.\n"
+            
+        custom_outputs = [p['id'].split('custom.output.')[-1] for p in node_config.get('ports', []) if p['id'].startswith('custom.output.')]
+        if custom_outputs:
+            system_prompt += (
+                f"\n## Required Outputs\n"
+                f"When you have finished using tools and are ready to provide your final answer, you MUST generate a JSON object with the following keys exactly: {custom_outputs}\n"
+                f"Your final output will be parsed as JSON. Do not include markdown code blocks, just raw JSON.\n"
+            )
+
+        # ─── 2. Memory Injection (into System Prompt) ────────
+        memory_type = node_config.get("memory") or getattr(self.config, "memory_config", {}).get("type")
         memory_manager = None
 
         if memory_type:
@@ -239,13 +281,17 @@ class UniversalAgentRuntime:
 
         # ─── 3. Tool Schema Injection (into System Prompt) ───
         tools_config = node_config.get("tools") or []
+        if getattr(self.config, "tools", None):
+            tools_config.extend(self.config.tools)
+            tools_config = list(set(tools_config))
+            
         if tools_config:
             schemas = self.tools_engine.get_schemas_for_tools(tools_config)
             tools_desc = json.dumps(schemas, indent=2)
             system_prompt += (
                 f"\n\n## Available Tools\n"
                 f"You have the following tools available. To call a tool, respond with a JSON object "
-                f'containing "tool_name" (string) and "kwargs" (object).\n'
+                f'containing "thought" (string), "tool_name" (string), and "kwargs" (object).\nDO NOT include your final outputs when making a tool call.\n'
                 f"```json\n{tools_desc}\n```\n"
                 f"After you receive a tool result, incorporate it into your final answer.\n"
             )
@@ -259,54 +305,102 @@ class UniversalAgentRuntime:
             f"to manage files in this directory.\n"
         )
 
-        try:
-            # Generate the response
-            response_text = await provider.generate_sync(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt
-            )
-            
-            # Clean up markdown fences
-            clean_text = response_text.replace("```json", "").replace("```", "").strip()
-            
+        # ─── 5. ReAct Loop & Auto-JSON Execution ────
+        max_react_steps = 10
+        react_step = 0
+        validation_error_msg = ""
+        result_data = {}
+        
+        conversation_history = f"Initial Context: {user_prompt}"
+        
+        while react_step < max_react_steps:
+            react_step += 1
+            current_system_prompt = system_prompt
+            if validation_error_msg:
+                current_system_prompt += f"\n\n## CORRECTION REQUIRED\nYour previous response failed validation with the following error:\n{validation_error_msg}\nPlease fix your response and ensure it is valid JSON."
+                
             try:
-                result_data = json.loads(clean_text)
+                response_text = await provider.generate_sync(
+                    system_prompt=current_system_prompt,
+                    user_prompt=conversation_history
+                )
                 
-                # Execute tool call if the LLM requested one
-                if "tool_name" in result_data and "kwargs" in result_data:
-                    tool_output = self.tools_engine.execute_tool(
-                        tool_name=result_data["tool_name"],
-                        kwargs=result_data["kwargs"],
-                        session_id=session_id
-                    )
-                    result_data["tool_execution_result"] = tool_output
-                    print(f"[Agent Runtime] Tool executed: {result_data['tool_name']} → {tool_output[:200] if isinstance(tool_output, str) else tool_output}")
+                clean_text = response_text.replace("```json", "").replace("```", "").strip()
                 
-                # Validate output against DB-stored JSON Schema
-                if self.config.output_schema and jsonschema:
-                    try:
-                        jsonschema.validate(instance=result_data, schema=self.config.output_schema)
-                        print(f"[Agent Runtime] Output validated against DB schema for '{self.config.name}'")
-                    except jsonschema.ValidationError as ve:
-                        print(f"[Agent Runtime] Schema validation warning for '{self.config.name}': {ve.message}")
-                elif self.config.output_schema and not jsonschema:
-                    print(f"[Agent Runtime] jsonschema package not installed — skipping validation for '{self.config.name}'")
+                try:
+                    step_data = json.loads(clean_text)
+                except json.JSONDecodeError as e:
+                    validation_error_msg = f"Invalid JSON generated: {str(e)}. Raw output was: {clean_text}"
+                    continue
                     
-            except json.JSONDecodeError:
-                result_data = {"raw_output": clean_text}
-
-            # ─── 5. Persist Memory After Execution ───────────
-            if memory_manager and memory_type:
-                output_text = clean_text[:2000]  # Cap memory snapshots
-                memory_manager.persist_after_execution(memory_type, output_text)
+                validation_error_msg = ""
+                thought = step_data.get("thought", "")
+                tool_name = step_data.get("tool_name")
+                tool_args = step_data.get("kwargs", {})
                 
-            return AgentOutput(
-                status="success",
-                output_result=result_data
-            )
-        except Exception as e:
-            return AgentOutput(
-                status="failed",
-                output_result={"error": str(e)},
-                error_logs=str(e)
-            )
+                if tool_name:
+                    try:
+                        tool_output = self.tools_engine.execute_tool(
+                            tool_name=tool_name,
+                            kwargs=tool_args,
+                            session_id=session_id
+                        )
+                    except Exception as e:
+                        tool_output = f"Tool execution failed: {str(e)}"
+                        
+                    if input_data.agent_run_id:
+                        conn = get_db_connection()
+                        try:
+                            conn.execute("INSERT INTO agent_steps (agent_run_id, step_number, thought, tool_name, tool_args, tool_result) VALUES (?, ?, ?, ?, ?, ?)",
+                                         (input_data.agent_run_id, react_step, thought, tool_name, json.dumps(tool_args), str(tool_output)))
+                            conn.commit()
+                        finally:
+                            conn.close()
+                            
+                    conversation_history += f"\n\n--- Step {react_step} ---\nThought: {thought}\nAction: {tool_name} with {tool_args}\nObservation: {tool_output}"
+                    continue
+                else:
+                    result_data = step_data
+                    is_valid = True
+                    missing_keys = [k for k in custom_outputs if k not in result_data and k != "_global_state_updates"]
+                    if missing_keys:
+                        validation_error_msg = f"Missing required keys in JSON output: {missing_keys}"
+                        is_valid = False
+                        
+                    if is_valid and self.config.output_schema and jsonschema:
+                        try:
+                            jsonschema.validate(instance=result_data, schema=self.config.output_schema)
+                        except jsonschema.ValidationError as ve:
+                            validation_error_msg = f"Schema validation error: {ve.message}"
+                            is_valid = False
+                            
+                    if not is_valid:
+                        continue
+                        
+                    if input_data.agent_run_id:
+                        conn = get_db_connection()
+                        try:
+                            conn.execute("INSERT INTO agent_steps (agent_run_id, step_number, thought, tool_name, tool_args, tool_result) VALUES (?, ?, ?, ?, ?, ?)",
+                                         (input_data.agent_run_id, react_step, thought, "FINAL_ANSWER", "", json.dumps(result_data)))
+                            conn.commit()
+                        finally:
+                            conn.close()
+                    break
+                
+            except Exception as loop_e:
+                if react_step == max_react_steps:
+                    raise loop_e
+                validation_error_msg = f"Generation error: {str(loop_e)}"
+                
+        if not result_data and validation_error_msg:
+             result_data = {"error": f"Failed to generate valid output after {max_react_steps} steps", "last_validation_error": validation_error_msg}
+             
+        # ─── 6. Persist Memory After Execution ───────────
+        if memory_manager and memory_type:
+            output_text = json.dumps(result_data)[:2000]  # Cap memory snapshots
+            memory_manager.persist_after_execution(memory_type, output_text)
+                
+        return AgentOutput(
+            status="success",
+            output_result=result_data
+        )

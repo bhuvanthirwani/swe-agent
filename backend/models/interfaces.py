@@ -33,6 +33,9 @@ class AgentInput(BaseModel):
     tools_override: Optional[List[str]] = None
     model_override: Optional[str] = None
     memory_config: Optional[Dict[str, Any]] = None
+    global_graph: Optional[Dict[str, Any]] = None
+    dynamic_inputs: Optional[Dict[str, Any]] = None
+    agent_run_id: Optional[int] = None
 
 class AgentOutput(BaseModel):
     status: str = "success"

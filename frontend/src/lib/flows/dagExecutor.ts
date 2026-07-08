@@ -23,7 +23,8 @@ export type DAGNodeType =
   | "buffer_memory"
   | "summary_memory"
   | "hippocampus_memory"
-  | "guardrail";
+  | "guardrail"
+  | "subworkflow";
 
 export type DAGPortDirection = "input" | "output";
 
@@ -84,6 +85,7 @@ export interface DAGNode {
   memory?: string;
   memoryConfig?: string;
   tools?: string[];
+  connectedConnectors?: string[];
   useCompaction?: boolean;
   compactionStrategy?:
     | "off"

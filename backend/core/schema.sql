@@ -82,6 +82,19 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     FOREIGN KEY(agent_id) REFERENCES agents(id)
 );
 
+-- 5.5 Tracking individual step-wise execution (ReAct loops, thoughts, and tools)
+CREATE TABLE IF NOT EXISTS agent_steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_run_id INTEGER NOT NULL,
+    step_number INTEGER NOT NULL,
+    thought TEXT,
+    tool_name TEXT,
+    tool_args TEXT,
+    tool_result TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(agent_run_id) REFERENCES agent_runs(id)
+);
+
 -- 6. Artifacts or specific deliverables generated during the workflow
 CREATE TABLE IF NOT EXISTS artifacts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -273,4 +286,25 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     framework TEXT,
     tech_stack TEXT,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 22. AI Flow Builder Sessions
+CREATE TABLE IF NOT EXISTS builder_sessions (
+    id TEXT PRIMARY KEY,
+    workflow_id TEXT,
+    status TEXT DEFAULT 'active',
+    draft_workflow_json TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(workflow_id) REFERENCES workflows(id)
+);
+
+CREATE TABLE IF NOT EXISTS builder_messages (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    metadata_json TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(session_id) REFERENCES builder_sessions(id)
 );

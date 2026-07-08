@@ -13,6 +13,7 @@ from backend.api.connectors import router as connectors_router
 from backend.api.rbac import router as rbac_router
 from backend.api.skills import router as skills_router
 from backend.api.rag import router as rag_router
+from backend.api.flow_builder import router as flow_builder_router
 import sqlite3
 import asyncio
 import json
@@ -32,6 +33,7 @@ app.include_router(connectors_router, prefix="/api/connectors", tags=["Connector
 app.include_router(rbac_router, prefix="/api/rbac", tags=["RBAC"])
 app.include_router(skills_router, prefix="/api/skills", tags=["Skills"])
 app.include_router(rag_router, prefix="/api/rag", tags=["RAG"])
+app.include_router(flow_builder_router, prefix="/api/flow-builder", tags=["Flow Builder"])
 
 async def cron_scheduler_task():
     """Background loop to trigger workflows that have a cron schedule."""
@@ -126,6 +128,24 @@ async def execute_workflow(req: OrchestrationRequest):
             execute_linear_pipeline(req.requirement, req.hitl_enabled),
             media_type="text/event-stream"
         )
+
+from fastapi import Request
+
+async def run_pipeline_bg(requirement, workflow_id):
+    from backend.core.pipeline import execute_dag_pipeline
+    generator = execute_dag_pipeline(requirement, workflow_id, False)
+    async for _ in generator:
+        pass
+
+@app.post("/api/webhook/{workflow_id}")
+async def workflow_webhook(workflow_id: str, request: Request):
+    try:
+        payload = await request.json()
+    except:
+        payload = {}
+        
+    asyncio.create_task(run_pipeline_bg(json.dumps(payload), workflow_id))
+    return {"status": "ok", "message": "Workflow started via webhook"}
 
 @app.post("/api/workspace")
 async def save_workspace():

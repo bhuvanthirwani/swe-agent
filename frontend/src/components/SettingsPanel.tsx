@@ -30,6 +30,7 @@ export default function SettingsPanel({
   const [llmConfigs, setLlmConfigs] = useState<LLMConfig[]>([]);
   const [llmProviders, setLlmProviders] = useState<any[]>([]);
   const [agentLlms, setAgentLlms] = useState<Record<string, number>>({});
+  const [architectLlmId, setArchitectLlmId] = useState<number | ''>('');
   
   const [githubToken, setGithubToken] = useState('');
   const [githubOwner, setGithubOwner] = useState('');
@@ -74,6 +75,12 @@ export default function SettingsPanel({
         const providers = await resProviders.json();
         setLlmProviders(providers);
         if (providers.length > 0 && newProviderId === 0) setNewProviderId(providers[0].id);
+      }
+
+            const resArchitect = await fetch('/api/service_integrations/ai_architect');
+      if (resArchitect.ok) {
+        const data = await resArchitect.json();
+        setArchitectLlmId(data.llm_config_id || '');
       }
 
       const resService = await fetch('/api/service_integrations/github_mcp');
@@ -222,6 +229,15 @@ export default function SettingsPanel({
 
   const save = async () => {
     try {
+      await fetch('/api/service_integrations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          service_name: 'ai_architect',
+          metadata: { llm_config_id: architectLlmId }
+        })
+      });
+
       await fetch('/api/service_integrations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -387,6 +403,18 @@ export default function SettingsPanel({
                     )}
                   </div>
                 </div>
+              </div>
+
+
+              <div style={{ padding: '16px', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '10px', marginTop: '16px' }}>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: '#fff', marginBottom: '8px' }}>✨ AI Architect Engine</div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
+                  Select the LLM that powers the Visual Builder's AI chat. If none is selected, the Architect will not work.
+                </div>
+                <select value={architectLlmId} onChange={e => setArchitectLlmId(e.target.value ? parseInt(e.target.value) : '')} style={inputStyle}>
+                  <option value="">-- No Model Selected --</option>
+                  {llmConfigs.map(config => <option key={config.id} value={config.id}>{config.name} ({config.model_name})</option>)}
+                </select>
               </div>
 
             </div>
@@ -560,6 +588,18 @@ export default function SettingsPanel({
                   )}
                 </div>
               </div>
+
+              <div style={{ padding: '16px', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '10px', marginTop: '16px' }}>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: '#fff', marginBottom: '8px' }}>✨ AI Architect Engine</div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
+                  Select the LLM that powers the Visual Builder's AI chat. If none is selected, the Architect will not work.
+                </div>
+                <select value={architectLlmId} onChange={e => setArchitectLlmId(e.target.value ? parseInt(e.target.value) : '')} style={inputStyle}>
+                  <option value="">-- No Model Selected --</option>
+                  {llmConfigs.map(config => <option key={config.id} value={config.id}>{config.name} ({config.model_name})</option>)}
+                </select>
+              </div>
+
             </div>
           </div>
         )}
@@ -627,6 +667,18 @@ export default function SettingsPanel({
                   No memory yet. Run a pipeline and your preferences will be learned automatically.
                 </div>
               )}
+
+              <div style={{ padding: '16px', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '10px', marginTop: '16px' }}>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: '#fff', marginBottom: '8px' }}>✨ AI Architect Engine</div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
+                  Select the LLM that powers the Visual Builder's AI chat. If none is selected, the Architect will not work.
+                </div>
+                <select value={architectLlmId} onChange={e => setArchitectLlmId(e.target.value ? parseInt(e.target.value) : '')} style={inputStyle}>
+                  <option value="">-- No Model Selected --</option>
+                  {llmConfigs.map(config => <option key={config.id} value={config.id}>{config.name} ({config.model_name})</option>)}
+                </select>
+              </div>
+
             </div>
           </div>
         )}

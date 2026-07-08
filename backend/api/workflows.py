@@ -41,8 +41,8 @@ class WorkflowCreate(BaseModel):
     version: Optional[str] = '1.0'
     entry_node_id: Optional[str] = None
     cron_schedule: Optional[str] = None
-    nodes: List[Dict[str, Any]] = []
-    edges: List[Dict[str, Any]] = []
+    nodes: List[DAGNodeSchema] = []
+    edges: List[DAGEdgeSchema] = []
 
 class WorkflowUpdate(BaseModel):
     name: Optional[str] = None
@@ -50,8 +50,8 @@ class WorkflowUpdate(BaseModel):
     version: Optional[str] = None
     entry_node_id: Optional[str] = None
     cron_schedule: Optional[str] = None
-    nodes: Optional[List[Dict[str, Any]]] = None
-    edges: Optional[List[Dict[str, Any]]] = None
+    nodes: Optional[List[DAGNodeSchema]] = None
+    edges: Optional[List[DAGEdgeSchema]] = None
 
 @router.get("/workflows", response_model=List[WorkflowResponse])
 def get_workflows(db: sqlite3.Connection = Depends(get_db)):
@@ -133,8 +133,12 @@ def create_workflow(workflow: WorkflowCreate, db: sqlite3.Connection = Depends(g
     
     now = datetime.utcnow().isoformat() + "Z"
     
+    # Dump Pydantic schemas back to dicts before validation (to preserve extra fields if any)
+    raw_nodes = [n.model_dump(by_alias=True) for n in workflow.nodes]
+    raw_edges = [e.model_dump(by_alias=True) for e in workflow.edges]
+    
     # Validate nodes and edges through DAG schemas
-    validated_nodes, validated_edges = _validate_nodes_edges(workflow.nodes, workflow.edges)
+    validated_nodes, validated_edges = _validate_nodes_edges(raw_nodes, raw_edges)
     
     cursor.execute(
         """INSERT INTO workflows 
@@ -187,11 +191,13 @@ def update_workflow(workflow_id: str, workflow_update: WorkflowUpdate, db: sqlit
         updates.append("cron_schedule = ?")
         params.append(workflow_update.cron_schedule if workflow_update.cron_schedule else None)
     if workflow_update.nodes is not None:
-        validated_nodes, _ = _validate_nodes_edges(workflow_update.nodes, [])
+        raw_nodes = [n.model_dump(by_alias=True) for n in workflow_update.nodes]
+        validated_nodes, _ = _validate_nodes_edges(raw_nodes, [])
         updates.append("nodes_json = ?")
         params.append(json.dumps(validated_nodes))
     if workflow_update.edges is not None:
-        _, validated_edges = _validate_nodes_edges([], workflow_update.edges)
+        raw_edges = [e.model_dump(by_alias=True) for e in workflow_update.edges]
+        _, validated_edges = _validate_nodes_edges([], raw_edges)
         updates.append("edges_json = ?")
         params.append(json.dumps(validated_edges))
         

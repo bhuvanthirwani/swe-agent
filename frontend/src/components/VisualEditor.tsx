@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { FlowBuilderChat } from './FlowBuilderChat';
+
 import {
   DAGEdge,
   DAGEdgeType,
@@ -12,6 +14,9 @@ import {
 } from "@/lib/flows/dagExecutor";
 import { AGENT_CONFIGS, AgentName } from "@/lib/types";
 import { Connector, fetchConnectors } from "@/lib/connectors";
+import ToolSelectionModal from "./ToolSelectionModal";
+import MemoryConfigModal from "./MemoryConfigModal";
+import ConnectorConfigModal from "./ConnectorConfigModal";
 
 interface VisualEditorProps {
   onRunWorkflow: (workflowId: string) => void;
@@ -131,6 +136,7 @@ function labelForType(type: DAGNodeType): string {
     summary_memory: "Summary Memory",
     hippocampus_memory: "Hippocampus Memory",
     guardrail: "Guardrail",
+    subworkflow: "Sub-Workflow",
   };
   return labels[type];
 }
@@ -153,6 +159,7 @@ function getNodeColor(type: DAGNodeType, agentName?: AgentName): string {
     summary_memory: "#fb923c",
     hippocampus_memory: "#a78bfa",
     guardrail: "#f43f5e",
+    subworkflow: "#3b82f6",
   };
   return colors[type];
 }
@@ -175,6 +182,7 @@ function getNodeIcon(type: DAGNodeType, agentName?: AgentName): string {
     summary_memory: "📚",
     hippocampus_memory: "🦛",
     guardrail: "🛡️",
+    subworkflow: "🔄",
   };
   return icons[type];
 }
@@ -275,6 +283,7 @@ function getDefaultPorts(node: DAGNode): DAGPort[] {
         makePort("model.in", "Model", "input", "model", "bottom", ["model"]),
         makePort("tools.in", "Tools", "input", "tool", "bottom", ["tool"]),
         makePort("memory.in", "Memory", "input", "memory", "bottom", ["memory"]),
+        makePort("connectors.in", "Connectors", "input", "connector", "bottom", ["connector"]),
         makePort("rag.in", "RAG", "input", "rag", "bottom", ["rag"]),
         makePort("guardrails.in", "Guard", "input", "guardrail", "bottom", ["guardrail"]),
       ];
@@ -430,10 +439,18 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState<Point>({ x: 0, y: 0 });
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [builderSessionId, setBuilderSessionId] = useState<string>(() => "bs-" + Date.now().toString(36) + Math.random().toString(36).substr(2, 5));
+
   const [isPanning, setIsPanning] = useState(false);
   const [connectionDraft, setConnectionDraft] = useState<ConnectionDraft | null>(null);
   const [activeMenu, setActiveMenu] = useState<{ nodeId: string; portId: string } | null>(null);
   const [connectors, setConnectors] = useState<Connector[]>([]);
+  const [editingToolsNodeId, setEditingToolsNodeId] = useState<string | null>(null);
+  const [editingMemoryNodeId, setEditingMemoryNodeId] = useState<string | null>(null);
+  const [editingConnectorsNodeId, setEditingConnectorsNodeId] = useState<string | null>(null);
+  const [newInputName, setNewInputName] = useState("");
+  const [newOutputName, setNewOutputName] = useState("");
 
   const canvasRef = useRef<HTMLDivElement>(null);
 
@@ -489,6 +506,28 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
         ...(node.config ?? {}),
         [key]: value,
       },
+    }));
+  };
+
+  const handleAddCustomPort = (direction: "input" | "output", name: string) => {
+    if (!selectedNodeId || !name.trim()) return;
+    const cleanName = name.trim().toLowerCase().replace(/\s+/g, "_");
+    const portId = `custom.${direction}.${cleanName}`;
+    updateNodeById(selectedNodeId, (node) => {
+      const existingPorts = node.ports ?? [];
+      if (existingPorts.find(p => p.id === portId)) return node;
+      const newPort = makePort(portId, name.trim(), direction, "data", direction === "input" ? "left" : "right", ["data", "context"]);
+      return { ...node, ports: [...existingPorts, newPort] };
+    });
+    if (direction === "input") setNewInputName("");
+    else setNewOutputName("");
+  };
+
+  const handleRemoveCustomPort = (portId: string) => {
+    if (!selectedNodeId) return;
+    updateNodeById(selectedNodeId, (node) => ({
+      ...node,
+      ports: (node.ports ?? []).filter(p => p.id !== portId)
     }));
   };
 
@@ -894,34 +933,87 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
                 </div>
 
                 {/* Available options */}
-                {popupOptions.map((opt) => (
+                {port.kind === 'tool' ? (
                   <button
-                    key={opt.label}
                     onClick={(e) => {
                       e.stopPropagation();
-                      handleQuickAdd(node, port, opt);
+                      setEditingToolsNodeId(node.id);
+                      setActiveMenu(null);
                     }}
                     style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "6px",
-                      padding: "6px 8px",
-                      borderRadius: "6px",
-                      border: "none",
-                      background: "rgba(255,255,255,0.04)",
-                      color: "#e2e8f0",
-                      fontSize: "11px",
-                      cursor: "pointer",
-                      textAlign: "left",
-                      transition: "background 0.12s",
+                      display: "flex", alignItems: "center", gap: "6px", padding: "6px 8px", borderRadius: "6px", border: "none",
+                      background: "rgba(255,255,255,0.04)", color: "#e2e8f0", fontSize: "11px", cursor: "pointer", textAlign: "left", transition: "background 0.12s"
                     }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = `${iconColor}22`)}
                     onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.04)")}
                   >
                     <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: iconColor, flexShrink: 0 }} />
-                    {opt.label}
+                    Configure Tools
                   </button>
-                ))}
+                ) : port.kind === 'memory' ? (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingMemoryNodeId(node.id);
+                      setActiveMenu(null);
+                    }}
+                    style={{
+                      display: "flex", alignItems: "center", gap: "6px", padding: "6px 8px", borderRadius: "6px", border: "none",
+                      background: "rgba(255,255,255,0.04)", color: "#e2e8f0", fontSize: "11px", cursor: "pointer", textAlign: "left", transition: "background 0.12s"
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = `${iconColor}22`)}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.04)")}
+                  >
+                    <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: iconColor, flexShrink: 0 }} />
+                    Configure Memory
+                  </button>
+                ) : port.kind === 'connector' ? (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingConnectorsNodeId(node.id);
+                      setActiveMenu(null);
+                    }}
+                    style={{
+                      display: "flex", alignItems: "center", gap: "6px", padding: "6px 8px", borderRadius: "6px", border: "none",
+                      background: "rgba(255,255,255,0.04)", color: "#e2e8f0", fontSize: "11px", cursor: "pointer", textAlign: "left", transition: "background 0.12s"
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = `${iconColor}22`)}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.04)")}
+                  >
+                    <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: iconColor, flexShrink: 0 }} />
+                    Configure Connectors
+                  </button>
+                ) : (
+                  popupOptions.map((opt) => (
+                    <button
+                      key={opt.label}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleQuickAdd(node, port, opt);
+                      }}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        padding: "6px 8px",
+                        borderRadius: "6px",
+                        border: "none",
+                        background: "rgba(255,255,255,0.04)",
+                        color: "#e2e8f0",
+                        fontSize: "11px",
+                        cursor: "pointer",
+                        textAlign: "left",
+                        transition: "background 0.12s",
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = `${iconColor}22`)}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.04)")}
+                    >
+                      <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: iconColor, flexShrink: 0 }} />
+                      {opt.label}
+                    </button>
+                  ))
+                )}
 
                 {/* Connected items with disconnect */}
                 {connectedEdges.length > 0 && (
@@ -1131,6 +1223,8 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
             <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "2px" }}>Interactive Workflow Builder</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <button onClick={() => setIsChatOpen(prev => !prev)} style={{ padding: "8px 14px", borderRadius: "9px", border: isChatOpen ? "1px solid rgba(99,102,241,0.6)" : "1px solid var(--border-primary)", background: isChatOpen ? "rgba(99,102,241,0.2)" : "rgba(255,255,255,0.04)", color: isChatOpen ? "#a5b4fc" : "#d1d5db", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}>✨ AI Architect</button>
+            <div style={{ width: "1px", height: "20px", background: "var(--border-primary)", margin: "0 4px" }} />
             <button onClick={() => setZoom((z) => Math.max(0.6, Number((z - 0.1).toFixed(2))))} style={{ padding: "6px 10px", borderRadius: "8px", border: "1px solid var(--border-primary)", background: "rgba(255,255,255,0.04)", color: "#d1d5db", cursor: "pointer" }}>-</button>
             <div style={{ fontFamily: "var(--font-mono)", fontSize: "12px", color: "#94a3b8", minWidth: "52px", textAlign: "center" }}>{Math.round(zoom * 100)}%</div>
             <button onClick={() => setZoom((z) => Math.min(1.8, Number((z + 0.1).toFixed(2))))} style={{ padding: "6px 10px", borderRadius: "8px", border: "1px solid var(--border-primary)", background: "rgba(255,255,255,0.04)", color: "#d1d5db", cursor: "pointer" }}>+</button>
@@ -1159,7 +1253,19 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
             cursor: isPanning ? "grabbing" : "grab",
           }}
         >
-          <div id="canvas-inner" style={{ position: "absolute", inset: 0, transform: `translate(${pan.x}px, ${pan.y}px)` }}>
+                    {isChatOpen && (
+            <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, zIndex: 100, boxShadow: "5px 0 20px rgba(0,0,0,0.5)" }}>
+              <FlowBuilderChat 
+                sessionId={builderSessionId} 
+                workflowId={activeWorkflowId || undefined} 
+                onClose={() => setIsChatOpen(false)}
+                onWorkflowProposal={(wf) => {
+                  updateActiveWorkflow(() => wf);
+                }}
+              />
+            </div>
+          )}
+          <div id="canvas-inner"  style={{ position: "absolute", inset: 0, transform: `translate(${pan.x}px, ${pan.y}px)` }}>
             {renderEdges()}
             {activeWorkflow?.nodes.map((node) => {
               const isSelected = node.id === selectedNodeId;
@@ -1271,6 +1377,33 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
                     style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px" }}
                   />
                 </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px" }}>
+                  <input
+                    type="checkbox"
+                    checked={!!selectedNode.config?.canWriteGlobalState}
+                    onChange={(e) => updateSelectedNodeConfig("canWriteGlobalState", e.target.checked)}
+                    id="global-state-toggle"
+                  />
+                  <label htmlFor="global-state-toggle" style={{ color: "#94a3b8", fontSize: "11px", cursor: "pointer" }}>Write to Global State</label>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px" }}>
+                  <input
+                    type="checkbox"
+                    checked={!!selectedNode.config?.runPerItem}
+                    onChange={(e) => updateSelectedNodeConfig("runPerItem", e.target.checked)}
+                    id="run-per-item-toggle"
+                  />
+                  <label htmlFor="run-per-item-toggle" style={{ color: "#94a3b8", fontSize: "11px", cursor: "pointer" }}>Run Per Item (Map-Reduce)</label>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px" }}>
+                  <input
+                    type="checkbox"
+                    checked={!!selectedNode.config?.requireHumanApproval}
+                    onChange={(e) => updateSelectedNodeConfig("requireHumanApproval", e.target.checked)}
+                    id="hitl-toggle"
+                  />
+                  <label htmlFor="hitl-toggle" style={{ color: "#94a3b8", fontSize: "11px", cursor: "pointer" }}>Require Human Approval (HITL)</label>
+                </div>
                 {/* Connected resources summary */}
                 {(() => {
                   const agentEdges = activeWorkflow?.edges.filter((e) => e.to === selectedNode.id && RESOURCE_EDGE_TYPES.includes(e.edgeType as DAGEdgeType)) ?? [];
@@ -1292,6 +1425,117 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
                     </div>
                   );
                 })()}
+
+                {/* Dynamic Ports UI */}
+                <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+                  <div style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "6px" }}>Dynamic Inputs</div>
+                  {(selectedNode.ports ?? []).filter(p => p.id.startsWith("custom.input.")).map(p => (
+                    <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 8px", background: "rgba(0,0,0,0.3)", borderRadius: "4px", marginBottom: "4px", fontSize: "11px", color: "#cbd5e1" }}>
+                      <span>{p.label}</span>
+                      <button onClick={() => handleRemoveCustomPort(p.id)} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: "12px", padding: "0 4px" }}>✕</button>
+                    </div>
+                  ))}
+                  <div style={{ display: "flex", gap: "4px", marginTop: "4px" }}>
+                    <input type="text" placeholder="New Input..." value={newInputName} onChange={e => setNewInputName(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAddCustomPort("input", newInputName)} style={{ flex: 1, background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "4px 6px", borderRadius: "4px", fontSize: "11px" }} />
+                    <button onClick={() => handleAddCustomPort("input", newInputName)} style={{ padding: "4px 8px", borderRadius: "4px", border: "none", background: "rgba(99,102,241,0.2)", color: "#a5b4fc", cursor: "pointer", fontSize: "11px" }}>Add</button>
+                  </div>
+
+                  <div style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", margin: "12px 0 6px 0" }}>Dynamic Outputs</div>
+                  {(selectedNode.ports ?? []).filter(p => p.id.startsWith("custom.output.")).map(p => (
+                    <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 8px", background: "rgba(0,0,0,0.3)", borderRadius: "4px", marginBottom: "4px", fontSize: "11px", color: "#cbd5e1" }}>
+                      <span>{p.label}</span>
+                      <button onClick={() => handleRemoveCustomPort(p.id)} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: "12px", padding: "0 4px" }}>✕</button>
+                    </div>
+                  ))}
+                  <div style={{ display: "flex", gap: "4px", marginTop: "4px" }}>
+                    <input type="text" placeholder="New Output..." value={newOutputName} onChange={e => setNewOutputName(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAddCustomPort("output", newOutputName)} style={{ flex: 1, background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "4px 6px", borderRadius: "4px", fontSize: "11px" }} />
+                    <button onClick={() => handleAddCustomPort("output", newOutputName)} style={{ padding: "4px 8px", borderRadius: "4px", border: "none", background: "rgba(16,185,129,0.2)", color: "#6ee7b7", cursor: "pointer", fontSize: "11px" }}>Add</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Sub-Workflow node config */}
+            {selectedNode.type === "subworkflow" && (
+              <div style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--border-primary)", background: "rgba(255,255,255,0.03)", display: "flex", flexDirection: "column", gap: "8px" }}>
+                <div style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Sub-Workflow Config</div>
+                <div>
+                  <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Target Workflow</div>
+                  <select value={configString(selectedNode, "targetWorkflowId", "")} onChange={(e) => updateSelectedNodeConfig("targetWorkflowId", e.target.value)} style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px" }}>
+                    <option value="">Select workflow...</option>
+                    {workflows.map((wf) => (
+                      <option key={wf.id} value={wf.id}>{wf.name}</option>
+                    ))}
+                  </select>
+                </div>
+                
+                {/* Dynamic Ports UI */}
+                <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+                  <div style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: "6px" }}>Dynamic Inputs</div>
+                  {(selectedNode.ports ?? []).filter(p => p.id.startsWith("custom.input.")).map(p => (
+                    <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 8px", background: "rgba(0,0,0,0.3)", borderRadius: "4px", marginBottom: "4px", fontSize: "11px", color: "#cbd5e1" }}>
+                      <span>{p.label}</span>
+                      <button onClick={() => handleRemoveCustomPort(p.id)} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: "12px", padding: "0 4px" }}>✕</button>
+                    </div>
+                  ))}
+                  <div style={{ display: "flex", gap: "4px", marginTop: "4px" }}>
+                    <input type="text" placeholder="New Input..." value={newInputName} onChange={e => setNewInputName(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAddCustomPort("input", newInputName)} style={{ flex: 1, background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "4px 6px", borderRadius: "4px", fontSize: "11px" }} />
+                    <button onClick={() => handleAddCustomPort("input", newInputName)} style={{ padding: "4px 8px", borderRadius: "4px", border: "none", background: "rgba(99,102,241,0.2)", color: "#a5b4fc", cursor: "pointer", fontSize: "11px" }}>Add</button>
+                  </div>
+
+                  <div style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", margin: "12px 0 6px 0" }}>Dynamic Outputs</div>
+                  {(selectedNode.ports ?? []).filter(p => p.id.startsWith("custom.output.")).map(p => (
+                    <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 8px", background: "rgba(0,0,0,0.3)", borderRadius: "4px", marginBottom: "4px", fontSize: "11px", color: "#cbd5e1" }}>
+                      <span>{p.label}</span>
+                      <button onClick={() => handleRemoveCustomPort(p.id)} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: "12px", padding: "0 4px" }}>✕</button>
+                    </div>
+                  ))}
+                  <div style={{ display: "flex", gap: "4px", marginTop: "4px" }}>
+                    <input type="text" placeholder="New Output..." value={newOutputName} onChange={e => setNewOutputName(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAddCustomPort("output", newOutputName)} style={{ flex: 1, background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "4px 6px", borderRadius: "4px", fontSize: "11px" }} />
+                    <button onClick={() => handleAddCustomPort("output", newOutputName)} style={{ padding: "4px 8px", borderRadius: "4px", border: "none", background: "rgba(16,185,129,0.2)", color: "#6ee7b7", cursor: "pointer", fontSize: "11px" }}>Add</button>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {/* Condition node config */}
+            {selectedNode.type === "condition" && (
+              <div style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--border-primary)", background: "rgba(255,255,255,0.03)", display: "flex", flexDirection: "column", gap: "8px" }}>
+                <div style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Condition Expression</div>
+                <div>
+                  <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Python Expression</div>
+                  <input value={configString(selectedNode, "expression", "context.get('developer_output', {}).get('needs_revision')")} onChange={(e) => updateSelectedNodeConfig("expression", e.target.value)} style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px", fontFamily: "var(--font-mono)" }} />
+                  <div style={{ fontSize: "9px", color: "#64748b", marginTop: "4px" }}>Evaluates to True or False to activate edges labeled "True" or "False".</div>
+                </div>
+              </div>
+            )}
+            
+            {/* Trigger node config */}
+            {selectedNode.type === "trigger" && (
+              <div style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--border-primary)", background: "rgba(255,255,255,0.03)", display: "flex", flexDirection: "column", gap: "8px" }}>
+                <div style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Trigger Config</div>
+                <div>
+                  <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Trigger Type</div>
+                  <select value={configString(selectedNode, "triggerType", "manual")} onChange={(e) => updateSelectedNodeConfig("triggerType", e.target.value)} style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px" }}>
+                    <option value="manual">Manual Execution</option>
+                    <option value="webhook">Webhook</option>
+                    <option value="schedule">Schedule (Cron)</option>
+                  </select>
+                </div>
+                {configString(selectedNode, "triggerType", "manual") === "schedule" && (
+                  <div>
+                    <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Cron Expression</div>
+                    <input value={configString(selectedNode, "cronExpression", "0 0 * * *")} onChange={(e) => updateSelectedNodeConfig("cronExpression", e.target.value)} placeholder="0 0 * * *" style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px", fontFamily: "var(--font-mono)" }} />
+                  </div>
+                )}
+                {configString(selectedNode, "triggerType", "manual") === "webhook" && (
+                  <div>
+                    <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Webhook Endpoint</div>
+                    <div style={{ fontSize: "11px", color: "#6ee7b7", background: "rgba(16,185,129,0.1)", padding: "4px 8px", borderRadius: "4px", border: "1px dashed rgba(16,185,129,0.3)", userSelect: "all" }}>
+                      /api/webhook/{activeWorkflowId}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1465,6 +1709,28 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
               </div>
             )}
 
+            {/* Connector node config */}
+            {(selectedNode.type === "trigger" || selectedNode.type === "action") && (
+              <div style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--border-primary)", background: "rgba(255,255,255,0.03)", display: "flex", flexDirection: "column", gap: "8px" }}>
+                <div style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Connector Config</div>
+                <div>
+                  <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Connector ID</div>
+                  <select value={selectedNode.connectorId ?? ""} onChange={(e) => updateSelectedNode({ connectorId: e.target.value })} style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px" }}>
+                    <option value="">Select connector...</option>
+                    {connectors.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Config (JSON)</div>
+                  <textarea
+                    value={configString(selectedNode, "connectorConfig", "{}")}
+                    onChange={(e) => updateSelectedNodeConfig("connectorConfig", e.target.value)}
+                    style={{ width: "100%", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-primary)", color: "white", padding: "6px", borderRadius: "4px", fontSize: "11px", minHeight: "60px", fontFamily: "var(--font-mono)", resize: "vertical" }}
+                  />
+                </div>
+              </div>
+            )}
+
             {/* Description field for all nodes */}
             <div style={{ padding: "10px", borderRadius: "8px", border: "1px solid var(--border-primary)", background: "rgba(255,255,255,0.03)" }}>
               <div style={{ color: "#94a3b8", fontSize: "11px", marginBottom: "4px" }}>Description</div>
@@ -1509,6 +1775,40 @@ export default function VisualEditor({ onRunWorkflow }: VisualEditorProps) {
           </div>
         )}
       </aside>
+
+      {editingToolsNodeId && (
+        <ToolSelectionModal
+          initialTools={activeWorkflow?.nodes.find(n => n.id === editingToolsNodeId)?.tools || []}
+          onSave={(tools) => {
+            updateNodeById(editingToolsNodeId, n => ({ ...n, tools }));
+            setEditingToolsNodeId(null);
+          }}
+          onCancel={() => setEditingToolsNodeId(null)}
+        />
+      )}
+
+      {editingMemoryNodeId && (
+        <MemoryConfigModal
+          initialConfig={activeWorkflow?.nodes.find(n => n.id === editingMemoryNodeId)?.memoryConfig}
+          onSave={(memoryConfig) => {
+            updateNodeById(editingMemoryNodeId, n => ({ ...n, memoryConfig }));
+            setEditingMemoryNodeId(null);
+          }}
+          onCancel={() => setEditingMemoryNodeId(null)}
+        />
+      )}
+
+      {editingConnectorsNodeId && (
+        <ConnectorConfigModal
+          initialConnectors={activeWorkflow?.nodes.find(n => n.id === editingConnectorsNodeId)?.connectedConnectors || []}
+          availableConnectors={connectors}
+          onSave={(connectedConnectors) => {
+            updateNodeById(editingConnectorsNodeId, n => ({ ...n, connectedConnectors }));
+            setEditingConnectorsNodeId(null);
+          }}
+          onCancel={() => setEditingConnectorsNodeId(null)}
+        />
+      )}
     </div>
   );
 }
